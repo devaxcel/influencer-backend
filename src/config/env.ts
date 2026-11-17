@@ -17,6 +17,8 @@ export const env = {
   // CORS: ek ya kai frontend domain (comma se alag, jaise production + preview)
   clientUrls,
   platformName: process.env.PLATFORM_NAME || 'Influnexa',
+  // Asal website ka pata (sitemap aur markdown ke links). Na ho to https://influnexa.com
+  siteUrl: (process.env.SITE_URL || 'https://influnexa.com').trim().replace(/\/+$/, ''),
   jwtAccessSecret: process.env.JWT_ACCESS_SECRET || '',
   jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || '',
   // Email (password reset / agreement codes) Resend API se: resend.com -> API Keys

@@ -39,7 +39,7 @@ const isPastDeadline = (campaign: Pick<ICampaign, 'deadline'>) =>
   Boolean(campaign.deadline && campaign.deadline < startOfToday())
 
 // Talents ke liye khuli: open aur aakhri tareekh nahi guzri
-const openFilter = (): QueryFilter<ICampaign> => ({
+export const openFilter = (): QueryFilter<ICampaign> => ({
   status: 'open',
   $or: [{ deadline: null }, { deadline: { $gte: startOfToday() } }],
 })

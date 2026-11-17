@@ -15,6 +15,7 @@ import shortlistRoutes from './shortlistRoutes'
 import directoryRoutes from './directoryRoutes'
 import campaignRoutes from './campaignRoutes'
 import accountRoutes from './accountRoutes'
+import agentRoutes from './agentRoutes'
 import cronRoutes from './cronRoutes'
 import inquiryRoutes from './inquiryRoutes'
 import { getUpload } from '../controllers/uploadController'
@@ -40,6 +41,8 @@ router.use('/shortlists', shortlistRoutes)
 router.use('/directory', directoryRoutes)
 router.use('/campaigns', campaignRoutes)
 router.use('/account', accountRoutes)
+// AI agents: /api/sitemap.xml aur /api/md/... (markdown)
+router.use(agentRoutes)
 // Vercel Cron (CRON_SECRET ke saath)
 router.use('/cron', cronRoutes)
 // Upload ki hui tasveerein (photos / logos)

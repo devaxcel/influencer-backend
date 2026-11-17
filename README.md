@@ -314,6 +314,19 @@ Anyone, logged in or not, can send a question about a talent from the public pro
 | GET | `/api/admin/inquiries/:id` | admin | `{ inquiry, history }` |
 | PATCH | `/api/admin/inquiries/:id` | admin | body `status (in_progress, answered, closed), adminNote?`. Written to the audit log (`inquiry.update`) |
 
+## AI agents and search engines
+
+The frontend forwards these to the backend (its `vercel.json`), so they are reachable on the site's own domain.
+
+| Method | URL | What |
+|---|---|---|
+| GET | `/api/sitemap.xml` (site: `/sitemap.xml`) | every public page, visible profile, open campaign and verified business / manager |
+| GET | `/api/md/people/:slug` (site: `/people/:slug.md`, or the profile URL with `Accept: text/markdown`) | the profile as markdown: details, followers per platform, services with prices, availability, rating, and how to book (guest inquiry API or hire request) |
+| GET | `/api/md/talent` (site: `/search.md`) | the 100 most followed public profiles as a markdown table |
+| GET | `/api/md/campaigns`, `/api/md/campaigns/:id` (site: `/campaigns.md`, `/campaigns/:id.md`) | open campaigns with budget, deadline and how to apply |
+
+Markdown answers send `Vary: Accept` and a `Link: <page>; rel="canonical"` header. Links use `SITE_URL` (default `https://influnexa.com`).
+
 ## Photo uploads (multer)
 
 Every account can upload a photo (talent, manager, admin) or logo (business); a talent, their manager (with `manageProfile`) or an admin (unclaimed profiles only) can also upload the public profile photo. Files come in as `multipart/form-data` in the field **`photo`**: one JPG, PNG or WebP image up to **2 MB**. The real type is checked from the file's first bytes, not from the name or browser header.

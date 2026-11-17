@@ -16,7 +16,7 @@ export const env = {
   clientUrl: clientUrls[0],
   // CORS: ek ya kai frontend domain (comma se alag, jaise production + preview)
   clientUrls,
-  platformName: process.env.PLATFORM_NAME || 'Influence Platform',
+  platformName: process.env.PLATFORM_NAME || 'influnexa.com',
   jwtAccessSecret: process.env.JWT_ACCESS_SECRET || '',
   jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || '',
   // Email (password reset / agreement codes) Resend API se: resend.com -> API Keys

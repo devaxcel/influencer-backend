@@ -18,6 +18,7 @@ import accountRoutes from './accountRoutes'
 import agentRoutes from './agentRoutes'
 import cronRoutes from './cronRoutes'
 import inquiryRoutes from './inquiryRoutes'
+import billingRoutes from './billingRoutes'
 import { getUpload } from '../controllers/uploadController'
 
 // Saari API routes yahan ek jagah jorte hain
@@ -41,6 +42,8 @@ router.use('/shortlists', shortlistRoutes)
 router.use('/directory', directoryRoutes)
 router.use('/campaigns', campaignRoutes)
 router.use('/account', accountRoutes)
+// Payments (Polar.sh)
+router.use('/billing', billingRoutes)
 // AI agents: /api/sitemap.xml aur /api/md/... (markdown)
 router.use(agentRoutes)
 // Vercel Cron (CRON_SECRET ke saath)

@@ -15,6 +15,7 @@ import {
 } from '../services/representationService'
 import { Representation } from '../models/Representation'
 import { AppError } from '../utils/AppError'
+import { assertWithinPlan } from '../services/billingService'
 import { sendSuccess } from '../utils/apiResponse'
 import { parseOrThrow } from '../utils/validation'
 import { createHireSchema, respondHireSchema } from '../validators/businessValidator'
@@ -76,6 +77,8 @@ async function findHire(id: string, owner: { business?: string; talent?: string 
 export async function createHire(req: Request, res: Response) {
   const input = parseOrThrow(createHireSchema, req.body ?? {})
   const businessId = req.user!.id
+  // Free plan: mahine ki hire requests ki hadd (payments chalu hon to)
+  await assertWithinPlan(req.user!, 'hiresPerMonth')
 
   const person = await Person.findOne({ _id: input.personId, visibility: 'visible', isDraft: false })
   if (!person) throw new AppError(404, 'NOT_FOUND', 'Profile not found')

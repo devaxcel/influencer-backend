@@ -10,6 +10,7 @@ import { notFound } from './middlewares/notFound'
 import { errorHandler } from './middlewares/errorHandler'
 import { writeLimiter } from './middlewares/rateLimit'
 import { sanitizeBody } from './middlewares/sanitize'
+import { polarWebhook } from './controllers/billingController'
 
 const app = express()
 
@@ -25,6 +26,8 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }))
 // Frontend (doosre domain) ko cookies ke saath request bhejne ki ijazat.
 // CLIENT_URL mein kai domain comma se (jaise production + preview)
 app.use(cors({ origin: env.clientUrls, credentials: true }))
+// Polar ka webhook: signature raw body pe check hota hai, is liye JSON parse se pehle
+app.post('/api/billing/webhook', express.raw({ type: '*/*', limit: '1mb' }), dbConnect, polarWebhook)
 app.use(express.json({ limit: '100kb' }))
 app.use(cookieParser())
 app.use(sanitizeBody)

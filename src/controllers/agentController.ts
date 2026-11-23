@@ -258,6 +258,7 @@ const STATIC_PAGES = [
   '/about',
   '/privacy',
   '/terms',
+  '/pricing',
 ]
 
 // GET /api/sitemap.xml -> public pages, profiles, khuli campaigns, verified businesses / managers

@@ -34,6 +34,11 @@ export const env = {
   // Optional: regex se number na nikle to Groq ka sasta model text se nikale
   groqApiKey: (process.env.GROQ_API_KEY || '').trim(),
   groqModel: (process.env.GROQ_MODEL || 'llama-3.1-8b-instant').trim(),
+  // Seconds between automatic suggestion refreshes (default 86400 = once per day)
+  suggestionsIntervalSeconds: Math.max(
+    1,
+    Number(process.env.SUGGESTIONS_INTERVAL_SECONDS) || 86400,
+  ),
   // Tasveerein Cloudinary pe (laga ho to sab uploads wahin). Ya poora CLOUDINARY_URL
   // (cloudinary://<api_key>:<api_secret>@<cloud_name>), ya teeno alag alag
   cloudinaryUrl: (process.env.CLOUDINARY_URL || '').trim(),

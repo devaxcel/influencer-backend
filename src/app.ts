@@ -11,6 +11,7 @@ import { errorHandler } from './middlewares/errorHandler'
 import { writeLimiter } from './middlewares/rateLimit'
 import { sanitizeBody } from './middlewares/sanitize'
 
+
 const app = express()
 
 // Vercel / proxy ke peeche: req.ip aur https (secure cookies) sahi aayen
@@ -34,7 +35,6 @@ app.use('/api/health', healthRoutes)
 
 // Baqi saari API routes se pehle MongoDB connect karo
 app.use('/api', dbConnect, writeLimiter, routes)
-
 app.use(notFound)
 app.use(errorHandler)
 

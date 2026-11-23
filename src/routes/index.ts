@@ -19,6 +19,7 @@ import agentRoutes from './agentRoutes'
 import cronRoutes from './cronRoutes'
 import inquiryRoutes from './inquiryRoutes'
 import { getUpload } from '../controllers/uploadController'
+import { adminSuggestionRouter, cronRouter as suggestionCronRouter } from './suggestionRoutes'
 
 // Saari API routes yahan ek jagah jorte hain
 const router = Router()
@@ -45,6 +46,8 @@ router.use('/account', accountRoutes)
 router.use(agentRoutes)
 // Vercel Cron (CRON_SECRET ke saath)
 router.use('/cron', cronRoutes)
+router.use('/cron', suggestionCronRouter)
+router.use('/admin/suggestions', adminSuggestionRouter)
 // Upload ki hui tasveerein (photos / logos)
 router.get('/uploads/:file', getUpload)
 

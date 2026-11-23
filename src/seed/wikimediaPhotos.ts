@@ -2,8 +2,8 @@ import sharp from 'sharp'
 import { env } from '../config/env'
 import type { IPhotoCredit } from '../models/Person'
 
-// Wikimedia ka qaida: har request pe saaf User-Agent
-const USER_AGENT = `${env.platformName.replace(/\s+/g, '')}Seed/1.0 (${env.clientUrl})`
+// Wikimedia ka qaida: har request pe saaf User-Agent (contact ke saath)
+const USER_AGENT = `${(env.platformName || 'App').replace(/\s+/g, '')}Seed/1.0 (${env.clientUrl || 'https://example.com'}; contact@example.com)`
 const PHOTO_WIDTH = 600
 // Asal file itni bari ho sakti hai; hum khud 600px WebP banate hain
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
@@ -44,7 +44,7 @@ export type WikiPhotoResult =
       credit: IPhotoCredit
     }
   | {
-      // no-article: Wikipedia pe page nahi; no-image: page pe lead image nahi;
+      // no-article: Wikipedia pe page nahi; no-image: page pe (Commons ki) image nahi;
       // not-free: image Commons pe nahi (aksar non-free) ya license free nahi
       status: 'no-article' | 'no-image' | 'not-free'
       pageUrl: string
@@ -95,6 +95,31 @@ export function isFreeLicense(shortName: string, nonFree?: string) {
   return /^(cc0|cc[ -]by(-sa)?\b|public domain|pd\b|pd-|gfdl|godl|attribution)/.test(name)
 }
 
+// Wikidata P18 (image) hamesha Commons ki file hoti hai: non-free local images ka hal
+async function getCommonsFileFromWikidata(title: string): Promise<string | undefined> {
+  const q = new URLSearchParams({
+    action: 'query',
+    format: 'json',
+    formatversion: '2',
+    redirects: '1',
+    prop: 'pageprops',
+    ppprop: 'wikibase_item',
+    titles: title,
+  })
+  const page = await getJson<{ query?: { pages?: { pageprops?: { wikibase_item?: string } }[] } }>(
+    `https://en.wikipedia.org/w/api.php?${q}`,
+  )
+  const qid = page.body?.query?.pages?.[0]?.pageprops?.wikibase_item
+  if (!qid) return undefined
+
+  const claims = await getJson<{
+    claims?: { P18?: { mainsnak?: { datavalue?: { value?: string } } }[] }
+  }>(
+    `https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=${encodeURIComponent(qid)}&property=P18&format=json`,
+  )
+  return claims.body?.claims?.P18?.[0]?.mainsnak?.datavalue?.value
+}
+
 // Kai titles ho sakte hain (jaise "Ducky_Bhai" na mile to asal naam): pehla mojood article
 export async function fetchWikiPhoto(titles: string[]): Promise<WikiPhotoResult> {
   let result: WikiPhotoResult | undefined
@@ -105,7 +130,7 @@ export async function fetchWikiPhoto(titles: string[]): Promise<WikiPhotoResult>
   return result!
 }
 
-// Wikipedia ki lead image -> Commons se license/author -> download -> 600px WebP
+// Wikipedia lead image (ya Wikidata P18) -> Commons se license/author -> download -> 600px WebP
 async function fetchWikiPhotoForTitle(title: string): Promise<WikiPhotoResult> {
   const fallbackPage = `https://en.wikipedia.org/wiki/${encodeURIComponent(title)}`
   const summary = await getJson<Summary>(
@@ -115,15 +140,21 @@ async function fetchWikiPhotoForTitle(title: string): Promise<WikiPhotoResult> {
     return { status: 'no-article', pageUrl: fallbackPage, reason: 'No English Wikipedia article' }
   }
   const pageUrl = summary.body.content_urls?.desktop?.page ?? fallbackPage
-  const source = summary.body.originalimage?.source
-  if (!source) return { status: 'no-image', pageUrl, reason: 'Article has no lead image' }
 
   // upload.wikimedia.org/wikipedia/commons/... = Commons (free). /wikipedia/en/... = local, aksar non-free
-  const path = new URL(source).pathname
-  if (!path.startsWith('/wikipedia/commons/')) {
-    return { status: 'not-free', pageUrl, reason: 'Lead image is not on Wikimedia Commons' }
+  let fileName: string | undefined
+  const source = summary.body.originalimage?.source
+  if (source) {
+    const path = new URL(source).pathname
+    if (path.startsWith('/wikipedia/commons/')) {
+      fileName = decodeURIComponent(path.split('/').pop() ?? '')
+    }
   }
-  const fileName = decodeURIComponent(path.split('/').pop() ?? '')
+  // Lead image Commons ki nahi (ya hai hi nahi): Wikidata P18 se Commons file lo
+  if (!fileName) fileName = await getCommonsFileFromWikidata(title)
+  if (!fileName) {
+    return { status: 'no-image', pageUrl, reason: 'No free image on Commons' }
+  }
 
   const params = new URLSearchParams({
     action: 'query',

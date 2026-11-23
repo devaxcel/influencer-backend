@@ -4,7 +4,6 @@ export interface SuggestionSocial {
   platform: string
   handle?: string
   url: string
-  // Asal profile se (YouTube API / Tavily) dhoonde hue followers aur kis page se
   followers?: number
   followersSourceUrl?: string
   followersUpdatedAt?: Date
@@ -12,7 +11,6 @@ export interface SuggestionSocial {
 
 export interface ISuggestion extends Document {
   date: string
-  // Ek generation ke 5 influencers ka group
   batchId?: string
   generatedAt?: Date
   groupId?: string
@@ -74,7 +72,12 @@ const SuggestionSchema = new Schema<ISuggestion>(
   { timestamps: true },
 )
 
-// Identity is checked before insert so old records without this optional field remain compatible.
 SuggestionSchema.index({ date: 1, identityKey: 1 })
+
+// ✅ Naya: batchId unique ho, taake ek hi batch ke duplicate records save na hon
+SuggestionSchema.index({ batchId: 1 }, { unique: true, sparse: true })
+
+// ✅ Naya: ek identity (name/social handle) ek hi dafa save ho
+SuggestionSchema.index({ identityKey: 1 }, { unique: true, sparse: true })
 
 export default model<ISuggestion>('Suggestion', SuggestionSchema)

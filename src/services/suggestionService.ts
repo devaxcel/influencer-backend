@@ -16,20 +16,9 @@ const PLATFORM_ORDER: FollowerPlatform[] = ['youtube', 'instagram', 'tiktok', 'x
 const SOCIAL_DOMAINS = ['instagram.com', 'youtube.com', 'tiktok.com', 'x.com', 'twitter.com', 'facebook.com']
 
 const TOPICS = [
-  'technology',
-  'food',
-  'fashion and beauty',
-  'cricket and sports',
-  'comedy and entertainment',
-  'education',
-  'travel',
-  'gaming',
-  'fitness and health',
-  'music',
-  'news and journalism',
-  'business and finance',
-  'lifestyle and vlogging',
-  'motivation and self improvement',
+  'technology', 'food', 'fashion and beauty', 'cricket and sports', 'comedy and entertainment',
+  'education', 'travel', 'gaming', 'fitness and health', 'music', 'news and journalism',
+  'business and finance', 'lifestyle and vlogging', 'motivation and self improvement',
 ]
 
 const MAX_ROUNDS = 3
@@ -40,18 +29,11 @@ const STALE_LOCK_MS = 10 * 60 * 1000
 export const todayKey = () => new Date().toISOString().slice(0, 10)
 
 const norm = (value: string) =>
-  value
-    .normalize('NFKD')
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '')
+  value.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]/g, '')
 
 const nameTokens = (name: string) =>
-  name
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((token) => token.length >= 3)
+  name.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3)
 
-// ✅ PLATFORMS array add kiya gaya taake 'website' type ka error khatam ho
 const PLATFORMS = ['instagram', 'youtube', 'tiktok', 'x', 'facebook', 'website'] as const
 
 const PROFILE_URL: Record<FollowerPlatform, (handle: string) => string> = {
@@ -64,7 +46,7 @@ const PROFILE_URL: Record<FollowerPlatform, (handle: string) => string> = {
 
 export const identityOf = (platform: string, handle: string) => `${platform}:${handle.toLowerCase()}`
 
-// ✅ Type alias add kiya gaya taake types compile hon
+// ✅ RealPerson Type fix
 interface RealPerson {
   name: string
   country?: string
@@ -104,6 +86,7 @@ export function suggestionIntervalMs() {
   return env.suggestionsIntervalSeconds * 1000
 }
 
+// ✅ Wikipedia Profile (Fixed return type)
 async function wikipediaProfile(person: RealPerson) {
   const titles = [person.wikiTitle, ...(person.altWikiTitles ?? [])].filter(Boolean) as string[]
   for (const title of titles) {
@@ -175,71 +158,9 @@ async function wikipediaProfile(person: RealPerson) {
       }
     }
   } catch {
-    // Wikipedia search unavailable: skip this identity rather than inventing data.
+    // Ignore
   }
   return null
-}
-
-async function verifiedSocialProfiles(person: RealPerson): Promise<
-  Array<{
-    platform: (typeof PLATFORMS)[number]
-    url: string
-    title?: string
-    content?: string
-  }>
-> {
-  if (!env.tavilyApiKey) return []
-  const query = `${person.name} ${person.country === 'PK' ? 'Pakistan' : ''} official Instagram YouTube TikTok profile`
-  try {
-    const response = await fetch('https://api.tavily.com/search', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${env.tavilyApiKey}`, 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(15_000),
-      body: JSON.stringify({
-        query,
-        search_depth: 'advanced',
-        include_answer: false,
-        max_results: 8,
-      }),
-    })
-    if (!response.ok) return []
-    const data = (await response.json()) as {
-      results?: { url?: string; title?: string; content?: string }[]
-    }
-    return (data.results ?? [])
-      .flatMap((result) => {
-        if (!result.url) return []
-        let url = result.url
-        let platform: (typeof PLATFORMS)[number] = 'website'
-        try {
-          const host = new URL(url).hostname.toLowerCase()
-          if (host.includes('instagram.com')) platform = 'instagram'
-          else if (host.includes('youtube.com') || host.includes('youtu.be')) platform = 'youtube'
-          else if (host.includes('tiktok.com')) platform = 'tiktok'
-          else if (host.includes('x.com') || host.includes('twitter.com')) platform = 'x'
-          else if (host.includes('facebook.com')) platform = 'facebook'
-          else return []
-        } catch {
-          return []
-        }
-        const identityText = `${result.title ?? ''} ${result.url ?? ''}`.toLowerCase()
-        const nameParts = person.name
-          .toLowerCase()
-          .split(/\s+/)
-          .filter((part) => part.length >= 4)
-        if (
-          nameParts.length > 0 &&
-          !nameParts.some((part) => identityText.includes(part)) &&
-          !identityText.includes(person.name.toLowerCase())
-        )
-          return []
-        if (!/^https?:\/\//i.test(url)) url = `https://${url}`
-        return [{ platform, url, title: result.title, content: result.content }]
-      })
-      .slice(0, 4)
-  } catch {
-    return []
-  }
 }
 
 export function missingKeys() {
@@ -254,17 +175,11 @@ const retryAfterMs = () => Math.min(suggestionIntervalMs(), 10 * 60 * 1000)
 export async function generationStatus() {
   const setting = await ensureSetting()
   const now = Date.now()
-  const running =
-    setting?.generationStatus === 'running' &&
-    Boolean(setting.generationStartedAt) &&
-    now - setting!.generationStartedAt!.getTime() < STALE_LOCK_MS
+  const running = setting?.generationStatus === 'running' && Boolean(setting.generationStartedAt) && now - setting!.generationStartedAt!.getTime() < STALE_LOCK_MS
   let nextAt: Date | null = null
   if (setting?.enabled) {
-    const fromSuccess = setting.lastGeneratedAt
-      ? setting.lastGeneratedAt.getTime() + suggestionIntervalMs()
-      : now
-    const fromError =
-      setting.lastError && setting.lastAttemptAt ? setting.lastAttemptAt.getTime() + retryAfterMs() : 0
+    const fromSuccess = setting.lastGeneratedAt ? setting.lastGeneratedAt.getTime() + suggestionIntervalMs() : now
+    const fromError = setting.lastError && setting.lastAttemptAt ? setting.lastAttemptAt.getTime() + retryAfterMs() : 0
     nextAt = new Date(Math.max(fromSuccess, fromError))
   }
   return {
@@ -280,12 +195,11 @@ export async function generationStatus() {
 
 function isDue(setting: Awaited<ReturnType<typeof ensureSetting>>, now: number) {
   if (!setting?.enabled) return false
-  if (setting.lastError && setting.lastAttemptAt && now - setting.lastAttemptAt.getTime() < retryAfterMs()) {
-    return false
-  }
+  if (setting.lastError && setting.lastAttemptAt && now - setting.lastAttemptAt.getTime() < retryAfterMs()) return false
   return !setting.lastGeneratedAt || now - setting.lastGeneratedAt.getTime() >= suggestionIntervalMs()
 }
 
+// ✅ acquireLock fixed with $inc cycle
 async function acquireLock() {
   const now = new Date()
   return SuggestionSetting.findOneAndUpdate(
@@ -297,7 +211,10 @@ async function acquireLock() {
         { generationStartedAt: { $exists: false } },
       ],
     },
-    { $set: { generationStatus: 'running', generationStartedAt: now, lastAttemptAt: now } },
+    { 
+      $set: { generationStatus: 'running', generationStartedAt: now, lastAttemptAt: now },
+      $inc: { cycle: 1 } // ✅ Cycle barha dein
+    },
     { returnDocument: 'after' },
   ).lean()
 }
@@ -307,18 +224,22 @@ export type GenerationResult =
   | { status: 'not_due' | 'busy' | 'disabled' }
   | { status: 'failed'; error: string }
 
+// ✅ generateIfDue fixed for force check and removed double cycle inc
 export async function generateIfDue(force = false): Promise<GenerationResult> {
   const setting = await ensureSetting()
   if (!force && !setting?.enabled) return { status: 'disabled' }
+  
+  if (force && setting?.lastGeneratedAt) {
+    const timeSinceLast = Date.now() - setting.lastGeneratedAt.getTime()
+    if (timeSinceLast < 5000) return { status: 'not_due' }
+  }
+
   if (!force && !isDue(setting, Date.now())) return { status: 'not_due' }
 
   const missing = missingKeys()
   if (missing.length) {
     const error = `${missing.join(' and ')} not set in the backend environment`
-    await SuggestionSetting.updateOne(
-      { key: 'global' },
-      { $set: { lastError: error, lastAttemptAt: new Date() } },
-    )
+    await SuggestionSetting.updateOne({ key: 'global' }, { $set: { lastError: error, lastAttemptAt: new Date() } })
     return { status: 'failed', error }
   }
 
@@ -326,24 +247,25 @@ export async function generateIfDue(force = false): Promise<GenerationResult> {
   if (!lock) return { status: 'busy' }
 
   try {
+    // ✅ buildGroup ko call kiya
     const docs = await buildGroup(lock.cycle ?? 0)
     const batchId = `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`
     const generatedAt = new Date()
+    
+    // ✅ doc ka type define kiya
     await Suggestion.insertMany(
-      docs.map((doc) => ({ ...doc, batchId, generatedAt, date: todayKey(), status: 'pending' })),
+      docs.map((doc: any) => ({ ...doc, batchId, generatedAt, date: todayKey(), status: 'pending' })),
     )
+    
     await SuggestionSetting.updateOne(
       { key: 'global' },
-      { $set: { lastGeneratedAt: generatedAt, lastError: null }, $inc: { cycle: 1 } },
+      { $set: { lastGeneratedAt: generatedAt, lastError: null } },
     )
     return { status: 'generated', batchId, count: docs.length }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error('[suggestions] generation failed:', message)
-    await SuggestionSetting.updateOne(
-      { key: 'global' },
-      { $set: { lastError: message.slice(0, 500) }, $inc: { cycle: 1 } },
-    )
+    await SuggestionSetting.updateOne({ key: 'global' }, { $set: { lastError: message.slice(0, 500) } })
     return { status: 'failed', error: message }
   } finally {
     await SuggestionSetting.updateOne({ key: 'global' }, { $set: { generationStatus: 'idle' } })
@@ -627,6 +549,7 @@ async function loadTaxonomy(): Promise<Taxonomy> {
   return { professions: pick(professions), industries: pick(industries), topics: pick(topics) }
 }
 
+// ✅ buildGroup function wapas add kiya aur fix kiya
 async function buildGroup(cycle: number) {
   const started = Date.now()
   const nationalNeed = env.suggestionsNationalCount

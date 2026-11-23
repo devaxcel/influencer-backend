@@ -2,6 +2,8 @@ import { Schema, model, Document, type Types } from 'mongoose'
 
 export interface ISuggestion extends Document {
   date: string
+  groupId?: string
+  groupTitle?: string
   identityKey?: string
   name: string
   scope: 'national' | 'international'
@@ -24,6 +26,8 @@ export interface ISuggestion extends Document {
 const SuggestionSchema = new Schema<ISuggestion>(
   {
     date: { type: String, required: true, index: true },
+    groupId: { type: String, required: false, index: true },
+    groupTitle: { type: String, required: true, trim: true, default: 'Influencer suggestion group' },
     identityKey: { type: String, index: true, sparse: true },
     name: { type: String, required: true, trim: true },
     scope: { type: String, enum: ['national', 'international'], required: true },

@@ -22,12 +22,107 @@ export async function listSuggestions(req: Request, res: Response) {
   const enabled = await suggestionsEnabled()
   if (date === todayKey() && enabled) await generateDailySuggestions(false)
   const suggestions = await Suggestion.find({ date, status: { $ne: 'dismissed' } }).sort({ scope: -1, createdAt: 1 })
-  return sendSuccess(res, { suggestions, enabled, intervalSeconds: env.suggestionsIntervalSeconds })
+  const grouped = new Map<string, { groupId: string; title: string; suggestions: typeof suggestions }>()
+  suggestions.forEach((suggestion, index) => {
+    const groupId = suggestion.groupId || `legacy-${Math.floor(index / 5) + 1}`
+    const title = suggestion.groupTitle || `Suggestion ${String.fromCharCode(65 + Math.floor(index / 5))}`
+    const group = grouped.get(groupId) ?? { groupId, title, suggestions: [] }
+    group.suggestions.push(suggestion)
+    grouped.set(groupId, group)
+  })
+  return sendSuccess(res, {
+    suggestions,
+    groups: [...grouped.values()],
+    enabled,
+    intervalSeconds: env.suggestionsIntervalSeconds,
+  })
 }
 
 export async function generateNow(_req: Request, res: Response) {
   const suggestions = await generateDailySuggestions(true)
   return sendSuccess(res, { suggestions, enabled: await suggestionsEnabled(), intervalSeconds: env.suggestionsIntervalSeconds })
+}
+
+export async function approveSuggestionGroup(req: Request, res: Response) {
+  const groupId = String(req.params.groupId)
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map((id: unknown) => String(id))
+    : null
+  const suggestions = await Suggestion.find({
+    groupId,
+    status: 'pending',
+    ...(ids ? { _id: { $in: ids } } : {}),
+  })
+  if (suggestions.length === 0) {
+    throw new AppError(404, 'NOT_FOUND', 'No pending influencers found in this suggestion group')
+  }
+
+  const approved: unknown[] = []
+  const failed: { id: string; code: string; message: string }[] = []
+  for (const suggestion of suggestions) {
+    try {
+      const socialAccounts = suggestion.socials.map((social) => {
+        const platform = social.platform as SocialPlatform
+        return {
+          platform,
+          handle: social.handle ?? normalizeHandle(platform, suggestion.username, social.url),
+          url: social.url,
+        }
+      })
+      for (const social of socialAccounts) {
+        const duplicate = await Person.findOne({
+          socialAccounts: {
+            $elemMatch: {
+              platform: social.platform,
+              $or: [
+                { url: { $in: [social.url, social.url.replace(/\/+$/, '')] } },
+                ...(social.handle ? [{ handle: social.handle }] : []),
+              ],
+            },
+          },
+        })
+        if (duplicate) throw new AppError(409, 'DUPLICATE', 'This influencer is already in the directory')
+      }
+      const [professions, industries, topics, slug] = await Promise.all([
+        resolveTaxonomySlugs(Profession, [suggestion.profession], 'professions'),
+        resolveTaxonomySlugs(Industry, [suggestion.industry], 'industries'),
+        resolveTaxonomySlugs(Topic, suggestion.topics, 'topics'),
+        generateUniquePersonSlug(suggestion.name),
+      ])
+      const person = await Person.create({
+        name: suggestion.name,
+        slug,
+        headline: suggestion.headline,
+        bio: suggestion.bio,
+        photoUrl: suggestion.photoUrl,
+        websiteUrl: suggestion.websiteUrl,
+        country: suggestion.country,
+        professions,
+        industries,
+        topics,
+        socialAccounts: mergeSocialAccounts([], socialAccounts),
+        sourceRecords: [{
+          sourceType: 'public_web',
+          url: suggestion.socials[0]?.url,
+          note: 'AI suggestion group reviewed by admin',
+        }],
+        visibility: 'visible',
+      })
+      await refreshNewAccounts(person)
+      suggestion.status = 'approved'
+      suggestion.personId = person._id
+      await suggestion.save()
+      approved.push({ suggestion, person })
+    } catch (error) {
+      const appError = error as { code?: string; statusCode?: number; message?: string }
+      failed.push({
+        id: String(suggestion._id),
+        code: appError.code ?? (appError.statusCode === 409 ? 'DUPLICATE' : 'ADD_FAILED'),
+        message: appError.message ?? 'Failed to add this influencer',
+      })
+    }
+  }
+  return sendSuccess(res, { approved, failed })
 }
 
 export async function approveSuggestion(req: Request, res: Response) {

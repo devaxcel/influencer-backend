@@ -8,6 +8,7 @@ import {
   cronGenerate,
   getSuggestionSettings,
   updateSuggestionSettings,
+  approveSuggestionGroup,
 } from '../controllers/suggestionController'
 import { requireRole } from '../middlewares/requireRole'
 
@@ -17,6 +18,7 @@ adminSuggestionRouter.get('/', listSuggestions)
 adminSuggestionRouter.get('/settings', getSuggestionSettings)
 adminSuggestionRouter.patch('/settings', updateSuggestionSettings)
 adminSuggestionRouter.post('/generate', generateNow)
+adminSuggestionRouter.post('/groups/:groupId/approve', approveSuggestionGroup)
 adminSuggestionRouter.post('/:id/approve', approveSuggestion)
 adminSuggestionRouter.post('/:id/dismiss', dismissSuggestion)
 

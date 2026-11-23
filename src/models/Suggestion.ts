@@ -40,14 +40,14 @@ const SuggestionSchema = new Schema<ISuggestion>(
   {
     date: { type: String, required: true, index: true },
     
-    // ✅ FIX: Yahan se 'index: true' hata diya hai
+   
     batchId: { type: String }, 
     
     generatedAt: { type: Date },
     groupId: { type: String, required: false, index: true },
     groupTitle: { type: String, required: true, trim: true, default: 'Influencer suggestion group' },
     
-    // ✅ FIX: Yahan se 'index: true' hata diya hai
+   
     identityKey: { type: String }, 
     
     name: { type: String, required: true, trim: true },
@@ -78,11 +78,11 @@ const SuggestionSchema = new Schema<ISuggestion>(
   { timestamps: true },
 )
 
-// ✅ Yeh indexes perfectly apply honge ab
+
 SuggestionSchema.index({ batchId: 1 }, { unique: true, sparse: true })
 SuggestionSchema.index({ identityKey: 1 }, { unique: true, sparse: true })
 
-// Purana index (agar zaroorat ho to rakh lein, lekin ab yeh unique index ki jagah nahi le raha)
+
 SuggestionSchema.index({ date: 1, identityKey: 1 })
 
 export default model<ISuggestion>('Suggestion', SuggestionSchema)

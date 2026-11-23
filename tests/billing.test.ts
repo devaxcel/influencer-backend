@@ -1,16 +1,18 @@
 import { createHmac } from 'node:crypto'
 import type { Express } from 'express'
 import request from 'supertest'
-import { env } from '../src/config/env'
-import { Subscription } from '../src/models/Subscription'
-import { HireRequest } from '../src/models/HireRequest'
-import { isProSubscription, verifyPolarSignature } from '../src/services/billingService'
+import type { env as Env } from '../src/config/env'
+import type * as BillingService from '../src/services/billingService'
 import { createPerson, loginAs, setupApp, teardownDb } from './helpers'
 
 let app: Express
+let env: typeof Env
+let billing: typeof BillingService
 
 beforeAll(async () => {
   app = await setupApp('billing')
+  env = (await import('../src/config/env')).env
+  billing = await import('../src/services/billingService')
 })
 afterAll(teardownDb)
 afterEach(() => {
@@ -30,17 +32,17 @@ describe('polar signature', () => {
     const body = '{"type":"subscription.active"}'
     const h = sign(body)
     const headers = { id: h['webhook-id'], timestamp: h['webhook-timestamp'], signature: h['webhook-signature'] }
-    expect(verifyPolarSignature(body, headers, SECRET)).toBe(true)
-    expect(verifyPolarSignature(body + ' ', headers, SECRET)).toBe(false)
-    expect(verifyPolarSignature(body, headers, 'other')).toBe(false)
-    expect(verifyPolarSignature(body, headers, SECRET, Number(headers.timestamp) + 3600)).toBe(false)
+    expect(billing.verifyPolarSignature(body, headers, SECRET)).toBe(true)
+    expect(billing.verifyPolarSignature(body + ' ', headers, SECRET)).toBe(false)
+    expect(billing.verifyPolarSignature(body, headers, 'other')).toBe(false)
+    expect(billing.verifyPolarSignature(body, headers, SECRET, Number(headers.timestamp) + 3600)).toBe(false)
   })
 
   it('treats active / trialing as Pro, canceled or long expired as free', () => {
-    expect(isProSubscription({ status: 'active', currentPeriodEnd: new Date(Date.now() + 1e9) })).toBe(true)
-    expect(isProSubscription({ status: 'canceled', currentPeriodEnd: new Date(Date.now() + 1e9) })).toBe(false)
-    expect(isProSubscription({ status: 'active', currentPeriodEnd: new Date(Date.now() - 10 * 864e5) })).toBe(false)
-    expect(isProSubscription(null)).toBe(false)
+    expect(billing.isProSubscription({ status: 'active', currentPeriodEnd: new Date(Date.now() + 1e9) })).toBe(true)
+    expect(billing.isProSubscription({ status: 'canceled', currentPeriodEnd: new Date(Date.now() + 1e9) })).toBe(false)
+    expect(billing.isProSubscription({ status: 'active', currentPeriodEnd: new Date(Date.now() - 10 * 864e5) })).toBe(false)
+    expect(billing.isProSubscription(null)).toBe(false)
   })
 })
 
@@ -84,6 +86,7 @@ describe('billing api', () => {
     const ok = await request(app).post('/api/billing/webhook').set('content-type', 'application/json')
       .set(sign(body)).send(body)
     expect(ok.status).toBe(202)
+    const { Subscription } = await import('../src/models/Subscription')
     const sub = await Subscription.findOne({ user: user._id })
     expect(sub?.status).toBe('active')
     expect(sub?.amount).toBe(29)
@@ -98,6 +101,7 @@ describe('billing api', () => {
     env.polarProducts.business = 'prod_business'
     const { agent, user } = await loginAs(app, 'business')
     const person = await createPerson()
+    const { HireRequest } = await import('../src/models/HireRequest')
     for (let i = 0; i < 3; i++) {
       await HireRequest.collection.insertOne({
         business: user._id, talent: user._id, person: person._id, title: 'x', message: 'x',

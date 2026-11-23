@@ -7,6 +7,16 @@ const clientUrls = (process.env.CLIENT_URL || 'http://localhost:3000')
   .map((url) => url.trim().replace(/\/+$/, ''))
   .filter(Boolean)
 
+// "3s" / "10m" / "2h" / "1d" / "90" (seconds) -> seconds. Ghalat ho to fallback
+export function parseDurationSeconds(raw: string | undefined, fallback: number) {
+  const match = (raw ?? '').trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?|d|days?)?$/)
+  if (!match) return fallback
+  const value = Number(match[1])
+  const unit = (match[2] ?? 's')[0]
+  const seconds = value * ({ s: 1, m: 60, h: 3600, d: 86400 } as Record<string, number>)[unit]
+  return seconds >= 1 ? Math.round(seconds) : fallback
+}
+
 // Saare environment variables sirf yahan se parhe jate hain
 export const env = {
   port: Number(process.env.PORT) || 5000,
@@ -34,11 +44,20 @@ export const env = {
   // Optional: regex se number na nikle to Groq ka sasta model text se nikale
   groqApiKey: (process.env.GROQ_API_KEY || '').trim(),
   groqModel: (process.env.GROQ_MODEL || 'openai/gpt-oss-20b').trim(),
-  // Seconds between automatic suggestion refreshes (default 86400 = once per day)
-  suggestionsIntervalSeconds: Math.max(
-    1,
-    Number(process.env.SUGGESTIONS_INTERVAL_SECONDS) || 86400,
+  // AI suggestions: har kitni der baad 5 naye influencers ka group. SUGGESTIONS_INTERVAL
+  // "3s", "10m", "2h", "1d" (ya sirf number = seconds). Purana SUGGESTIONS_INTERVAL_SECONDS bhi
+  // chalta hai. Default: din mein ek dafa
+  suggestionsIntervalSeconds: parseDurationSeconds(
+    process.env.SUGGESTIONS_INTERVAL || process.env.SUGGESTIONS_INTERVAL_SECONDS,
+    86400,
   ),
+  // Har group mein kitne Pakistani (baqi international). 5 mein se, 1 se 4 tak
+  suggestionsNationalCount: Math.min(
+    4,
+    Math.max(1, Number(process.env.SUGGESTIONS_NATIONAL_COUNT) || 3),
+  ),
+  // Suggestion banne ke liye kam az kam itne asal (verified) followers
+  suggestionsMinFollowers: Math.max(0, Number(process.env.SUGGESTIONS_MIN_FOLLOWERS ?? 10000) || 0),
   // Tasveerein Cloudinary pe (laga ho to sab uploads wahin). Ya poora CLOUDINARY_URL
   // (cloudinary://<api_key>:<api_secret>@<cloud_name>), ya teeno alag alag
   cloudinaryUrl: (process.env.CLOUDINARY_URL || '').trim(),

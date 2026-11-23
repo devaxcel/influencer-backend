@@ -1,54 +1,76 @@
+import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import Suggestion from '../models/Suggestion'
+import Suggestion, { type SuggestionSocial } from '../models/Suggestion'
 import SuggestionSetting from '../models/SuggestionSetting'
 import { Person } from '../models/Person'
 import { Industry, Profession, Topic } from '../models/taxonomy'
 import { env } from '../config/env'
-import type { QueryFilter } from 'mongoose'
-import type { ISuggestionSetting } from '../models/SuggestionSetting'
-import { REAL_PEOPLE, type RealPerson } from '../seed/realPeople'
+import type { FollowerPlatform } from '../constants/people'
+import { handleFromUrl } from '../utils/socialHandle'
+import { groqChat } from './groqChat'
+import { tavilyFollowers } from './followers/tavily'
+import { youtubeChannel } from './followers/youtube'
 
-const PLATFORMS = [
-  'instagram',
-  'youtube',
-  'tiktok',
-  'x',
-  'facebook',
-  'linkedin',
-  'snapchat',
-  'twitch',
-  'podcast',
-  'website',
-] as const
+// AI influencer suggestions: har SUGGESTIONS_INTERVAL ke baad 5 asal influencers ka ek group
+// (Pakistani + international). Tareeqa:
+//   1. Tavily web search: is dafa ke topic pe Pakistani aur international creators ki lists
+//   2. Groq: sirf usi search text mein se naam nikalta hai (naam text mein na ho to reject)
+//   3. Har naam ke social links Tavily se (asal instagram.com / youtube.com ... pages)
+//   4. Har account ke followers asal profile se: YouTube Data API, baqi Tavily (followerService
+//      wala hi code). Jo account verify na ho woh nahi rakhte; koi verify na ho to banda nahi
+// Koi number, link ya banda ghara nahi jata. Poore 5 na milein to group nahi banta, error
+// admin panel pe dikhta hai aur thori der baad dobara koshish hoti hai.
 
-const itemSchema = z.object({
-  name: z.string().min(2),
-  scope: z.enum(['national', 'international']),
-  country: z.string().regex(/^[A-Z]{2}$/),
-  headline: z.string().min(3),
-  bio: z.string().max(3000).optional(),
-  photoUrl: z.string().url().optional(),
-  websiteUrl: z.string().url().optional(),
-  username: z.string().max(100).optional(),
-  followerCount: z.number().int().min(0).optional(),
-  reason: z.string().min(3),
-  profession: z.string(),
-  industry: z.string(),
-  topics: z.array(z.string()).default([]),
-  socials: z.array(z.object({
-    platform: z.enum(PLATFORMS),
-    handle: z.string().max(100).optional(),
-    url: z.string().url(),
-  })).min(1),
-})
+export const GROUP_SIZE = 5
+const PLATFORM_ORDER: FollowerPlatform[] = ['youtube', 'instagram', 'tiktok', 'x', 'facebook']
+const SOCIAL_DOMAINS = ['instagram.com', 'youtube.com', 'tiktok.com', 'x.com', 'twitter.com', 'facebook.com']
+// Har dafa naya topic, taake har group mein naye log aayen
+const TOPICS = [
+  'technology',
+  'food',
+  'fashion and beauty',
+  'cricket and sports',
+  'comedy and entertainment',
+  'education',
+  'travel',
+  'gaming',
+  'fitness and health',
+  'music',
+  'news and journalism',
+  'business and finance',
+  'lifestyle and vlogging',
+  'motivation and self improvement',
+]
+const MAX_ROUNDS = 3
+const MAX_LOOKUPS_PER_PERSON = 4
+const GENERATION_BUDGET_MS = 240_000
+const STALE_LOCK_MS = 10 * 60 * 1000
 
 export const todayKey = () => new Date().toISOString().slice(0, 10)
-const norm = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '')
-const identity = (item: { name: string; socials: { platform: string; handle?: string; url: string }[] }) =>
-  item.socials.map((social) => `${social.platform}:${norm(social.handle || social.url)}`).sort()[0] ||
-  `name:${norm(item.name)}`
+const norm = (value: string) =>
+  value
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+const nameTokens = (name: string) =>
+  name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 3)
 
-async function acquireGeneration(date: string, force: boolean) {
+const PROFILE_URL: Record<FollowerPlatform, (handle: string) => string> = {
+  instagram: (h) => `https://www.instagram.com/${h}/`,
+  youtube: (h) => (/^UC[\w-]{22}$/.test(h) ? `https://www.youtube.com/channel/${h}` : `https://www.youtube.com/@${h}`),
+  tiktok: (h) => `https://www.tiktok.com/@${h}`,
+  x: (h) => `https://x.com/${h}`,
+  facebook: (h) => `https://www.facebook.com/${h}`,
+}
+
+export const identityOf = (platform: string, handle: string) => `${platform}:${handle.toLowerCase()}`
+
+// ---------- Settings ----------
+
+async function ensureSetting() {
   try {
     await SuggestionSetting.updateOne(
       { key: 'global' },
@@ -58,37 +80,7 @@ async function acquireGeneration(date: string, force: boolean) {
   } catch (error) {
     if ((error as { code?: number }).code !== 11000) throw error
   }
-  if (force) {
-    await SuggestionSetting.updateOne(
-      { key: 'global' },
-      { $set: { generationStatus: 'idle' } },
-    )
-  }
-  const staleBefore = new Date(Date.now() - 15 * 60 * 1000)
-  await SuggestionSetting.updateOne(
-    {
-      key: 'global',
-      generationStatus: 'running',
-      $or: [
-        { generationStartedAt: { $lt: staleBefore } },
-        { generationStartedAt: { $exists: false } },
-      ],
-    },
-    { $set: { generationStatus: 'idle' } },
-  )
-  const filter: QueryFilter<ISuggestionSetting> = force
-    ? { key: 'global' as const, generationStatus: 'idle' }
-    : {
-        key: 'global' as const,
-        enabled: true,
-        generationStatus: 'idle',
-        $or: [{ generationDate: { $ne: date } }, { generationDate: { $exists: false } }],
-      }
-  return SuggestionSetting.findOneAndUpdate(
-    filter,
-    { $set: { generationDate: date, generationStatus: 'running', generationStartedAt: new Date() } },
-    { returnDocument: 'after' },
-  )
+  return SuggestionSetting.findOne({ key: 'global' }).lean()
 }
 
 export async function suggestionsEnabled() {
@@ -99,7 +91,7 @@ export async function suggestionsEnabled() {
 export async function setSuggestionsEnabled(enabled: boolean) {
   return SuggestionSetting.findOneAndUpdate(
     { key: 'global' },
-    { $set: { enabled, ...(enabled ? {} : { generationStatus: 'idle' }) } },
+    { $set: { enabled } },
     { upsert: true, returnDocument: 'after' },
   ).lean()
 }
@@ -238,270 +230,481 @@ async function verifiedSocialProfiles(person: RealPerson): Promise<Array<{
   }
 }
 
-export async function generateDailySuggestions(force = false) {
-  const date = todayKey()
-  const total = Number(process.env.SUGGEST_COUNT || 15)
-  const national = Number(process.env.SUGGEST_NATIONAL_COUNT || 10)
-  const homeCountry = process.env.SUGGEST_HOME_COUNTRY || 'Pakistan'
-  const existing = await Suggestion.find({ date, status: { $ne: 'dismissed' } })
-  if (!force && !(await suggestionsEnabled())) return existing
+export function missingKeys() {
+  return [
+    ...(env.tavilyApiKey ? [] : ['TAVILY_API_KEY']),
+    ...(env.groqApiKey ? [] : ['GROQ_API_KEY']),
+  ]
+}
 
-  const setting = await SuggestionSetting.findOne({ key: 'global' }).lean()
-  const lastGeneratedAt = setting?.lastGeneratedAt
-  const isDue =
-    force ||
-    !lastGeneratedAt ||
-    Date.now() - lastGeneratedAt.getTime() >= suggestionIntervalMs()
+// Fail hone ke baad dobara koshish: interval ke baad, magar 10 minute se zyada intezar nahi
+const retryAfterMs = () => Math.min(suggestionIntervalMs(), 10 * 60 * 1000)
 
-  if (!isDue) return existing
-  if (!(await acquireGeneration(date, true))) {
-    return Suggestion.find({ date, status: { $ne: 'dismissed' } }).sort({ scope: -1, createdAt: 1 })
+// Agla group kab (admin panel ke liye). null = abhi (ya band)
+export async function generationStatus() {
+  const setting = await ensureSetting()
+  const now = Date.now()
+  const running =
+    setting?.generationStatus === 'running' &&
+    Boolean(setting.generationStartedAt) &&
+    now - setting!.generationStartedAt!.getTime() < STALE_LOCK_MS
+  let nextAt: Date | null = null
+  if (setting?.enabled) {
+    const fromSuccess = setting.lastGeneratedAt
+      ? setting.lastGeneratedAt.getTime() + suggestionIntervalMs()
+      : now
+    const fromError =
+      setting.lastError && setting.lastAttemptAt ? setting.lastAttemptAt.getTime() + retryAfterMs() : 0
+    nextAt = new Date(Math.max(fromSuccess, fromError))
   }
+  return {
+    enabled: setting?.enabled ?? true,
+    generating: running,
+    lastGeneratedAt: setting?.lastGeneratedAt ?? null,
+    nextGenerationAt: nextAt,
+    lastError: setting?.lastError ?? null,
+    intervalSeconds: env.suggestionsIntervalSeconds,
+    missingKeys: missingKeys(),
+  }
+}
 
-  try {
-    const active: typeof existing = []
-    const [people, past, professions, industries, topics] = await Promise.all([
-      Person.find().select('name socialAccounts').limit(2000).lean(),
-      Suggestion.find().select('name socials').lean(),
-      Profession.find().select('slug').lean(),
-      Industry.find().select('slug').lean(),
-      Topic.find().select('slug').lean(),
-    ])
-    const seen = new Set(people.map((person) => norm(person.name)))
-    const seenIdentityKeys = new Set([
-      ...people.flatMap((person) => {
-        const socials = person.socialAccounts.map((social) => ({
-          platform: social.platform,
-          handle: social.handle,
-          url: social.url,
-        }))
-        return socials.length ? [identity({ name: person.name, socials })] : []
-      }),
-      ...past.flatMap((suggestion) =>
-        suggestion.socials.length ? [identity({ name: suggestion.name, socials: suggestion.socials })] : [],
-      ),
-    ])
-    const avoid = [...seen].slice(0, 400).join(', ')
-    const need = total
-    const needNational = Math.min(need, Math.max(0, national - active.filter((s) => s.scope === 'national').length))
-    const needIntl = need - needNational
-    if (need === 0) return active
-    if (!env.tavilyApiKey) throw new Error('TAVILY_API_KEY is not configured')
-    const nationalPool = REAL_PEOPLE.filter((person) =>
-      person.country === 'PK' &&
-      ['Mooroo', 'Nadir Ali'].includes(person.name),
-    )
-    const internationalPool = REAL_PEOPLE.filter((person) =>
-      person.country !== 'PK' &&
-      ['MrBeast', 'IShowSpeed', 'PewDiePie', 'Khaby Lame'].includes(person.name),
-    )
-    const fallbackNational = REAL_PEOPLE.filter((person) =>
-      person.country === 'PK' &&
-      !nationalPool.some((item) => item.slug === person.slug),
-    )
-    const fallbackInternational = REAL_PEOPLE.filter((person) =>
-      person.country !== 'PK' &&
-      !internationalPool.some((item) => item.slug === person.slug),
-    )
+function isDue(setting: Awaited<ReturnType<typeof ensureSetting>>, now: number) {
+  if (!setting?.enabled) return false
+  if (setting.lastError && setting.lastAttemptAt && now - setting.lastAttemptAt.getTime() < retryAfterMs()) {
+    return false
+  }
+  return !setting.lastGeneratedAt || now - setting.lastGeneratedAt.getTime() >= suggestionIntervalMs()
+}
 
-    const rotate = (pool: RealPerson[], count: number, offset: number) =>
-      Array.from({ length: count }, (_, index) => {
-        if (pool.length === 0) return null
-        return pool[(offset + index) % pool.length]
-      }).filter((person): person is RealPerson => Boolean(person))
+// Ek waqt mein ek hi generation (Vercel ke kai functions / scheduler / admin panel)
+async function acquireLock() {
+  const now = new Date()
+  return SuggestionSetting.findOneAndUpdate(
+    {
+      key: 'global',
+      $or: [
+        { generationStatus: { $ne: 'running' } },
+        { generationStartedAt: { $lt: new Date(now.getTime() - STALE_LOCK_MS) } },
+        { generationStartedAt: { $exists: false } },
+      ],
+    },
+    { $set: { generationStatus: 'running', generationStartedAt: now, lastAttemptAt: now } },
+    { returnDocument: 'after' },
+  ).lean()
+}
 
-    const dayOffset = Number(todayKey().replace(/-/g, '')) % 100000
-    const nationalSeed = [
-      ...rotate(nationalPool.length ? nationalPool : fallbackNational, Math.max(needNational * 3, 30), dayOffset),
-      ...rotate(fallbackNational, Math.max(needNational * 2, 20), dayOffset),
-    ].filter((person, index, pool) => pool.findIndex((item) => item.slug === person.slug) === index)
-    const internationalSeed = rotate(
-      internationalPool.length ? internationalPool : fallbackInternational,
-      Math.max(needIntl * 3, 30),
-      dayOffset + 7,
-    )
-    const seed = [
-      ...nationalSeed.slice(0, needNational),
-      ...internationalSeed.slice(0, needIntl),
-    ]
+export type GenerationResult =
+  | { status: 'generated'; batchId: string; count: number }
+  | { status: 'not_due' | 'busy' | 'disabled' }
+  | { status: 'failed'; error: string }
 
-    let raw: unknown[] = []
-    for (const person of seed) {
-      if (seen.has(norm(person.name))) continue
-      const wiki = await wikipediaProfile(person)
-      if (!wiki) continue
-      const verified = await verifiedSocialProfiles(person)
-      const profiles = [...verified]
-      if (person.youtubeHandle) {
-        const youtubeUrl = `https://www.youtube.com/@${person.youtubeHandle}`
-        if (!profiles.some((profile) => profile.platform === 'youtube')) {
-          profiles.unshift({
-            platform: 'youtube',
-            url: youtubeUrl,
-            title: `${person.name} YouTube`,
-            content: 'Official YouTube profile',
-          })
-        }
-      }
-      if (profiles.length === 0) {
-        profiles.push({
-          platform: 'website',
-          url: wiki.wikipediaUrl,
-          title: `${person.name} Wikipedia`,
-          content: 'Wikipedia identity and biography',
-        })
-      }
-      const youtubeProfile = profiles.find((profile) => profile.platform === 'youtube')
-      let followerCount: number | undefined
-      if (youtubeProfile) {
-        const handle = new URL(youtubeProfile.url).pathname
-          .split('/')
-          .filter(Boolean)
-          .pop()
-          ?.replace(/^@/, '')
-        if (handle) {
-          try {
-            const youtube = await import('./followers/youtube.js')
-            const result = await youtube.youtubeFollowers(handle)
-            if (result.status === 'ok') followerCount = result.count
-          } catch {
-            followerCount = undefined
-          }
-        }
-      }
-      raw.push({
-        name: person.name,
-        scope: person.country === 'PK' ? 'national' : 'international',
-        country: person.country,
-        headline: person.headline,
-        bio: wiki.extract || person.bio,
-        photoUrl: wiki.photoUrl,
-        websiteUrl: wiki.wikipediaUrl,
-        reason: `Wikipedia identity and biography: ${wiki.wikipediaUrl}`,
-        profession: person.professions[0] || 'content-creator',
-        industry: person.industries[0] || 'content-creation',
-        topics: person.topics,
-        followerCount,
-        socials: profiles.map((profile) => ({
-          platform: profile.platform,
-          handle: (() => {
-            try {
-              return new URL(profile.url).pathname.split('/').filter(Boolean).pop()?.replace(/^@/, '')
-            } catch {
-              return undefined
-            }
-          })(),
-          url: profile.url,
-        })),
-      })
-      if (raw.length >= need) break
-    }
+// Waqt ho gaya ho (ya force) to naya group banao. Kabhi throw nahi karta
+export async function generateIfDue(force = false): Promise<GenerationResult> {
+  const setting = await ensureSetting()
+  if (!force && !setting?.enabled) return { status: 'disabled' }
+  if (!force && !isDue(setting, Date.now())) return { status: 'not_due' }
 
-    const slugs = {
-      professions: new Set(professions.map((item) => item.slug)),
-      industries: new Set(industries.map((item) => item.slug)),
-      topics: new Set(topics.map((item) => item.slug)),
-    }
-    const docs: Record<string, unknown>[] = []
-    const countryCodes: Record<string, string> = {
-      pakistan: 'PK',
-      india: 'IN',
-      'united states': 'US',
-      usa: 'US',
-      'united kingdom': 'GB',
-      uk: 'GB',
-      canada: 'CA',
-      australia: 'AU',
-      uae: 'AE',
-      'united arab emirates': 'AE',
-    }
-    for (const candidate of raw) {
-      if (!candidate || typeof candidate !== 'object') continue
-      const source = candidate as Record<string, unknown>
-      const rawCountry = typeof source.country === 'string' ? source.country.trim() : ''
-      const country = countryCodes[rawCountry.toLowerCase()] ||
-        (/^[A-Z]{2}$/.test(rawCountry) ? rawCountry : '')
-      if (!country) continue
-      const sourceSocials = Array.isArray(source.socials)
-        ? source.socials as { platform?: unknown; handle?: unknown; url?: unknown }[]
-        : []
-      const socials = sourceSocials.flatMap((social) => {
-        if (!social || typeof social.url !== 'string') return []
-        let url = social.url.trim()
-        if (!/^https?:\/\//i.test(url)) url = `https://${url}`
-        const platform = typeof social.platform === 'string'
-          ? social.platform.toLowerCase()
-          : 'website'
-        if (!PLATFORMS.includes(platform as typeof PLATFORMS[number])) return []
-        return [{
-          platform,
-          handle: typeof social.handle === 'string' ? social.handle : undefined,
-          url,
-        }]
-      })
-      if (socials.length === 0) continue
-      const name = typeof source.name === 'string' ? source.name.trim() : ''
-      if (name.length < 2) continue
-      const normalizedTopics = Array.isArray(source.topics)
-        ? source.topics.filter((topic): topic is string =>
-            typeof topic === 'string' && slugs.topics.has(topic))
-        : []
-      const normalized = {
-        name,
-        scope: country === 'PK' ? 'national' : 'international',
-        country,
-        headline: typeof source.headline === 'string' && source.headline.trim()
-          ? source.headline.trim()
-          : typeof source.bio === 'string' && source.bio.trim()
-            ? source.bio.trim().slice(0, 160)
-            : 'Public influencer',
-        bio: typeof source.bio === 'string' ? source.bio : undefined,
-        photoUrl: typeof source.photoUrl === 'string' ? source.photoUrl : undefined,
-        websiteUrl: typeof source.websiteUrl === 'string' ? source.websiteUrl : undefined,
-        username: typeof source.username === 'string' ? source.username : undefined,
-        followerCount: typeof source.followerCount === 'number' ? source.followerCount : undefined,
-        reason: typeof source.reason === 'string' && source.reason.trim()
-          ? source.reason.trim()
-          : 'Verified through public web search',
-        profession: typeof source.profession === 'string' && slugs.professions.has(source.profession)
-          ? source.profession
-          : 'content-creator',
-        industry: typeof source.industry === 'string' && slugs.industries.has(source.industry)
-          ? source.industry
-          : 'content-creation',
-        topics: normalizedTopics,
-        socials,
-      }
-      const parsed = itemSchema.safeParse(normalized)
-      if (!parsed.success) {
-        continue
-      }
-      const item = parsed.data
-      const identityKey = identity(item)
-      if (seen.has(norm(item.name)) || (!force && seenIdentityKeys.has(identityKey))) continue
-      if (!slugs.professions.has(item.profession) || !slugs.industries.has(item.industry)) continue
-      seen.add(norm(item.name))
-      seenIdentityKeys.add(identityKey)
-      const groupIndex = Math.floor(docs.length / 5)
-      const groupId = `${date}-group-${groupIndex + 1}`
-      docs.push({
-        ...item,
-        identityKey,
-        groupId,
-        groupTitle: `Suggestion ${String.fromCharCode(65 + groupIndex)}`,
-        topics: item.topics.filter((topic) => slugs.topics.has(topic)),
-        date,
-        status: 'pending',
-      })
-      if (docs.length >= need) break
-    }
-    const created = await Suggestion.insertMany(docs, { ordered: false })
+  const missing = missingKeys()
+  if (missing.length) {
+    const error = `${missing.join(' and ')} not set in the backend environment`
     await SuggestionSetting.updateOne(
       { key: 'global' },
-      { $set: { lastGeneratedAt: new Date(), generationStatus: 'idle' } },
+      { $set: { lastError: error, lastAttemptAt: new Date() } },
     )
-    return [...active, ...created]
+    return { status: 'failed', error }
+  }
+
+  const lock = await acquireLock()
+  if (!lock) return { status: 'busy' }
+
+  try {
+    const docs = await buildGroup(lock.cycle ?? 0)
+    const batchId = `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`
+    const generatedAt = new Date()
+    await Suggestion.insertMany(
+      docs.map((doc) => ({ ...doc, batchId, generatedAt, date: todayKey(), status: 'pending' })),
+    )
+    await SuggestionSetting.updateOne(
+      { key: 'global' },
+      { $set: { lastGeneratedAt: generatedAt, lastError: null }, $inc: { cycle: 1 } },
+    )
+    return { status: 'generated', batchId, count: docs.length }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error('[suggestions] generation failed:', message)
+    await SuggestionSetting.updateOne(
+      { key: 'global' },
+      { $set: { lastError: message.slice(0, 500) }, $inc: { cycle: 1 } },
+    )
+    return { status: 'failed', error: message }
   } finally {
     await SuggestionSetting.updateOne({ key: 'global' }, { $set: { generationStatus: 'idle' } })
   }
+}
+
+// ---------- 1. Discovery (Tavily) ----------
+
+interface TavilyResult {
+  url?: string
+  title?: string
+  content?: string
+}
+
+async function tavilySearch(body: Record<string, unknown>, timeoutMs = 20_000) {
+  const res = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.tavilyApiKey}`, 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(timeoutMs),
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`Tavily API ${res.status}: ${(await res.text()).slice(0, 300)}`)
+  return (await res.json()) as { answer?: string; results?: TavilyResult[] }
+}
+
+async function discover(scope: 'national' | 'international', topic: string) {
+  const query =
+    scope === 'national'
+      ? `top Pakistani ${topic} influencers and content creators on YouTube, Instagram and TikTok`
+      : `top international ${topic} influencers and content creators worldwide on YouTube, Instagram and TikTok`
+  const data = await tavilySearch({
+    query,
+    search_depth: 'advanced',
+    include_answer: true,
+    max_results: 8,
+  })
+  const parts = [
+    data.answer ?? '',
+    ...(data.results ?? []).map((r) => `${r.title ?? ''}\n${(r.content ?? '').slice(0, 1500)}`),
+  ]
+  return parts.join('\n\n').slice(0, 12_000)
+}
+
+// ---------- 2. Names from the evidence (Groq) ----------
+
+const candidateSchema = z.object({
+  name: z.string().min(2).max(120),
+  country: z.string().optional().catch(undefined),
+  headline: z.string().max(200).optional().catch(undefined),
+  reason: z.string().max(400).optional().catch(undefined),
+  profession: z.string().optional().catch(undefined),
+  industry: z.string().optional().catch(undefined),
+  topics: z.array(z.string()).optional().catch(undefined),
+  handles: z.record(z.string(), z.string().nullable().optional()).optional().catch(undefined),
+})
+type Candidate = z.infer<typeof candidateSchema> & { scope: 'national' | 'international' }
+
+interface Taxonomy {
+  professions: { slug: string; name: string }[]
+  industries: { slug: string; name: string }[]
+  topics: { slug: string; name: string }[]
+}
+
+function parseJsonObject(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    const start = text.indexOf('{')
+    const end = text.lastIndexOf('}')
+    if (start < 0 || end <= start) return null
+    try {
+      return JSON.parse(text.slice(start, end + 1))
+    } catch {
+      return null
+    }
+  }
+}
+
+async function extractCandidates(
+  scope: 'national' | 'international',
+  evidence: string,
+  want: number,
+  taxonomy: Taxonomy,
+  avoid: string[],
+): Promise<Candidate[]> {
+  const list = (items: { slug: string; name: string }[]) =>
+    items.map((item) => `${item.slug} (${item.name})`).join(', ') || '(none)'
+  const prompt = `From the web search text below, list up to ${want} individual ${
+    scope === 'national' ? 'Pakistani' : 'non-Pakistani'
+  } social media influencers or content creators.
+
+Rules:
+- Only people whose full name is written in the search text. Never add anyone from memory.
+- Individuals only (no brands, TV channels, agencies or lists).
+- Skip these people: ${avoid.slice(0, 150).join(', ') || '(none)'}
+- country: ISO 3166-1 alpha-2 code ("PK" for Pakistan).
+- headline: one short line about what they create, based on the text.
+- reason: one sentence on why they are a good fit for a brand directory.
+- profession / industry: one slug from the lists below, or null. topics: up to 3 slugs from the list, or [].
+- handles: their social media usernames ONLY if written in the text, as {"instagram","youtube","tiktok","x","facebook"}; omit unknown ones. Never guess.
+- Do not include follower counts.
+
+professions: ${list(taxonomy.professions)}
+industries: ${list(taxonomy.industries)}
+topics: ${list(taxonomy.topics)}
+
+Reply with JSON only: {"candidates":[{"name","country","headline","reason","profession","industry","topics":[],"handles":{}}]}
+
+Search text:
+${evidence}`
+
+  const answer = await groqChat(
+    [
+      {
+        role: 'system',
+        content:
+          'You extract facts from web search text. You never invent people, usernames, links or numbers.',
+      },
+      { role: 'user', content: prompt },
+    ],
+    { maxTokens: 2500, json: true, timeoutMs: 45_000, throwOnError: true },
+  )
+  const parsed = parseJsonObject(answer ?? '') as { candidates?: unknown[] } | null
+  const evidenceNorm = norm(evidence)
+  const out: Candidate[] = []
+  for (const raw of parsed?.candidates ?? []) {
+    const result = candidateSchema.safeParse(raw)
+    if (!result.success) continue
+    const candidate = result.data
+    // Naam search ke text mein hona chahiye (model ne apni yaad se na diya ho)
+    if (!evidenceNorm.includes(norm(candidate.name))) continue
+    out.push({ ...candidate, scope })
+  }
+  return out
+}
+
+// ---------- 3 + 4. Asal social accounts aur followers ----------
+
+interface VerifiedAccount extends SuggestionSocial {
+  platform: FollowerPlatform
+  handle: string
+  followers: number
+}
+
+interface Verified {
+  candidate: Candidate
+  accounts: VerifiedAccount[]
+  photoUrl?: string
+  total: number
+}
+
+// Naam se us ke asal profile links (Tavily ko sirf social sites pe dhoondo)
+async function findHandles(candidate: Candidate) {
+  const tokens = nameTokens(candidate.name)
+  const scored = new Map<FollowerPlatform, Map<string, number>>()
+  const add = (platform: FollowerPlatform, handle: string, score: number) => {
+    const byHandle = scored.get(platform) ?? new Map<string, number>()
+    byHandle.set(handle, (byHandle.get(handle) ?? 0) + score)
+    scored.set(platform, byHandle)
+  }
+
+  // Model ke diye hue handles (text mein the) bhi aazmaate hain, verify phir bhi hota hai
+  for (const [platform, value] of Object.entries(candidate.handles ?? {})) {
+    if (!value || !PLATFORM_ORDER.includes(platform as FollowerPlatform)) continue
+    const handle = value.trim().replace(/^@+/, '').toLowerCase()
+    if (/^[a-z0-9._-]{2,60}$/i.test(handle)) add(platform as FollowerPlatform, handle, 1)
+  }
+
+  try {
+    const data = await tavilySearch(
+      {
+        query: `${candidate.name} official account`,
+        include_domains: SOCIAL_DOMAINS,
+        search_depth: 'basic',
+        max_results: 10,
+      },
+      15_000,
+    )
+    for (const result of data.results ?? []) {
+      if (!result.url) continue
+      const title = `${result.title ?? ''} ${(result.content ?? '').slice(0, 300)}`.toLowerCase()
+      const nameInPage = tokens.length > 0 && tokens.every((token) => title.includes(token))
+      for (const platform of PLATFORM_ORDER) {
+        const handle = handleFromUrl(platform, result.url)
+        if (!handle) continue
+        const handleNorm = norm(handle)
+        const handleLooksLikeName = tokens.some((token) => handleNorm.includes(token))
+        const score = (nameInPage ? 2 : 0) + (handleLooksLikeName ? 1 : 0)
+        if (score > 0) add(platform, handle, score)
+      }
+    }
+  } catch (error) {
+    console.warn('[suggestions] social search failed for', candidate.name, (error as Error).message)
+  }
+
+  return PLATFORM_ORDER.flatMap((platform) =>
+    [...(scored.get(platform) ?? new Map()).entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2)
+      .map(([handle]) => ({ platform, handle })),
+  )
+}
+
+async function verifyCandidate(candidate: Candidate, known: Set<string>): Promise<Verified | null> {
+  const options = await findHandles(candidate)
+  const accounts: VerifiedAccount[] = []
+  let photoUrl: string | undefined
+  let lookups = 0
+  const tokens = nameTokens(candidate.name)
+
+  for (const platform of PLATFORM_ORDER) {
+    if (accounts.some((account) => account.platform === platform)) continue
+    for (const option of options.filter((o) => o.platform === platform)) {
+      if (lookups >= MAX_LOOKUPS_PER_PERSON) break
+      // Yeh account pehle se directory / kisi suggestion mein hai: banda hi chhor do
+      if (known.has(identityOf(platform, option.handle))) return null
+      lookups += 1
+      const now = new Date()
+      if (platform === 'youtube') {
+        if (!env.youtubeApiKey) continue
+        try {
+          const channel = await youtubeChannel(option.handle)
+          if (!channel || channel.subscribers === null) continue
+          // Channel ka naam bande ke naam se mile (fan / doosre channel na hon)
+          const title = channel.title.toLowerCase()
+          if (tokens.length && !tokens.some((token) => title.includes(token))) continue
+          accounts.push({
+            platform,
+            handle: option.handle,
+            url: PROFILE_URL.youtube(option.handle),
+            followers: channel.subscribers,
+            followersSourceUrl: `https://www.youtube.com/channel/${channel.id}`,
+            followersUpdatedAt: now,
+          })
+          photoUrl = photoUrl ?? channel.thumbnail
+          break
+        } catch {
+          continue
+        }
+      }
+      const result = await tavilyFollowers(platform as Exclude<FollowerPlatform, 'youtube'>, option.handle)
+      if (result.status !== 'ok') continue
+      accounts.push({
+        platform,
+        handle: option.handle,
+        url: PROFILE_URL[platform](option.handle),
+        followers: result.count,
+        followersSourceUrl: result.sourceUrl,
+        followersUpdatedAt: now,
+      })
+      break
+    }
+  }
+
+  const total = accounts.reduce((sum, account) => sum + account.followers, 0)
+  if (accounts.length === 0 || total < env.suggestionsMinFollowers) return null
+  return { candidate, accounts, photoUrl, total }
+}
+
+// Directory aur purani suggestions mein jo log / accounts pehle se hain
+async function knownIdentities() {
+  const [people, past] = await Promise.all([
+    Person.find().select('name socialAccounts.platform socialAccounts.handle').limit(5000).lean(),
+    Suggestion.find().select('name socials.platform socials.handle').limit(5000).lean(),
+  ])
+  const names = new Set<string>()
+  const handles = new Set<string>()
+  for (const item of [...people.map((p) => ({ name: p.name, socials: p.socialAccounts })), ...past]) {
+    names.add(norm(item.name))
+    for (const social of item.socials ?? []) {
+      if (social.handle) handles.add(identityOf(social.platform, social.handle))
+    }
+  }
+  return { names, handles, avoid: [...people, ...past].map((p) => p.name) }
+}
+
+async function loadTaxonomy(): Promise<Taxonomy> {
+  const [professions, industries, topics] = await Promise.all([
+    Profession.find().select('slug name').limit(80).lean(),
+    Industry.find().select('slug name').limit(80).lean(),
+    Topic.find().select('slug name').limit(120).lean(),
+  ])
+  const pick = (items: { slug: string; name: string }[]) => items.map(({ slug, name }) => ({ slug, name }))
+  return { professions: pick(professions), industries: pick(industries), topics: pick(topics) }
+}
+
+// Ek group ke 5 tasdeeq shuda log (warna throw)
+async function buildGroup(cycle: number) {
+  const started = Date.now()
+  const nationalNeed = env.suggestionsNationalCount
+  const intlNeed = GROUP_SIZE - nationalNeed
+  const [known, taxonomy] = await Promise.all([knownIdentities(), loadTaxonomy()])
+  const verified: Record<'national' | 'international', Verified[]> = { national: [], international: [] }
+  const tried = new Set<string>()
+  const enough = () =>
+    verified.national.length >= nationalNeed && verified.international.length >= intlNeed
+
+  for (let round = 0; round < MAX_ROUNDS && !enough(); round += 1) {
+    if (Date.now() - started > GENERATION_BUDGET_MS) break
+    const topic = TOPICS[(cycle * 2 + round) % TOPICS.length]
+    for (const scope of ['national', 'international'] as const) {
+      const need = scope === 'national' ? nationalNeed : intlNeed
+      if (verified[scope].length >= need) continue
+      let evidence: string
+      try {
+        evidence = await discover(scope, topic)
+      } catch (error) {
+        if (round === MAX_ROUNDS - 1) throw error
+        continue
+      }
+      const candidates = (
+        await extractCandidates(scope, evidence, 10, taxonomy, known.avoid)
+      ).filter((candidate) => {
+        const key = norm(candidate.name)
+        if (known.names.has(key) || tried.has(key)) return false
+        const country = candidate.country?.toUpperCase()
+        if (scope === 'national') return !country || country === 'PK'
+        return Boolean(country && /^[A-Z]{2}$/.test(country) && country !== 'PK')
+      })
+
+      // 3-3 ke batch mein verify, jab tak is scope ke log poore na hon
+      for (let i = 0; i < candidates.length && verified[scope].length < need; i += 3) {
+        if (Date.now() - started > GENERATION_BUDGET_MS) break
+        const batch = candidates.slice(i, i + 3)
+        batch.forEach((candidate) => tried.add(norm(candidate.name)))
+        const results = await Promise.all(batch.map((c) => verifyCandidate(c, known.handles)))
+        for (const result of results) {
+          if (!result || verified[scope].length >= need) continue
+          verified[scope].push(result)
+          known.names.add(norm(result.candidate.name))
+          result.accounts.forEach((a) => known.handles.add(identityOf(a.platform, a.handle)))
+        }
+      }
+    }
+  }
+
+  const group = [
+    ...verified.national.slice(0, nationalNeed),
+    ...verified.international.slice(0, intlNeed),
+  ]
+  if (group.length < GROUP_SIZE) {
+    throw new Error(
+      `Only ${group.length} of ${GROUP_SIZE} influencers could be verified with real social accounts ` +
+        `(${verified.national.length} Pakistani, ${verified.international.length} international). ` +
+        'Will try again with new topics.',
+    )
+  }
+
+  const slugs = {
+    professions: new Set(taxonomy.professions.map((t) => t.slug)),
+    industries: new Set(taxonomy.industries.map((t) => t.slug)),
+    topics: new Set(taxonomy.topics.map((t) => t.slug)),
+  }
+  return group.map(({ candidate, accounts, photoUrl, total }) => {
+    const top = [...accounts].sort((a, b) => b.followers - a.followers)[0]
+    return {
+      name: candidate.name.trim(),
+      scope: candidate.scope,
+      country: candidate.scope === 'national' ? 'PK' : candidate.country!.toUpperCase(),
+      headline: candidate.headline?.trim() || `${candidate.scope === 'national' ? 'Pakistani' : 'International'} content creator`,
+      reason: candidate.reason?.trim() || `Verified on ${accounts.map((a) => a.platform).join(', ')}`,
+      profession: candidate.profession && slugs.professions.has(candidate.profession) ? candidate.profession : undefined,
+      industry: candidate.industry && slugs.industries.has(candidate.industry) ? candidate.industry : undefined,
+      topics: (candidate.topics ?? []).filter((t) => slugs.topics.has(t)).slice(0, 3),
+      photoUrl,
+      username: top.handle,
+      followerCount: total,
+      identityKey: identityOf(top.platform, top.handle),
+      socials: accounts,
+    }
+  })
 }

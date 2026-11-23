@@ -7,6 +7,11 @@ export interface ISuggestionSetting extends Document {
   lastGeneratedAt?: Date
   generationStatus: 'idle' | 'running'
   generationStartedAt?: Date
+  // Aakhri koshish kab hui aur kya ghalat hua (admin panel pe dikhta hai)
+  lastAttemptAt?: Date
+  lastError?: string | null
+  // Har generation pe barhta hai: agli dafa naye topics
+  cycle: number
 }
 
 const schema = new Schema<ISuggestionSetting>(
@@ -17,6 +22,9 @@ const schema = new Schema<ISuggestionSetting>(
     lastGeneratedAt: Date,
     generationStatus: { type: String, enum: ['idle', 'running'], default: 'idle' },
     generationStartedAt: Date,
+    lastAttemptAt: Date,
+    lastError: { type: String, default: null },
+    cycle: { type: Number, default: 0 },
   },
   { timestamps: true },
 )

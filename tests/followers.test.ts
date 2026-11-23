@@ -3,12 +3,15 @@ import request from 'supertest'
 import { createPerson, loginAs, setupApp, teardownDb } from './helpers'
 import { parseFollowerCount } from '../src/services/followers/parseCount'
 import { handleFromUrl, normalizeHandle, urlMatchesHandle } from '../src/utils/socialHandle'
-import { isDue, mergeSocialAccounts } from '../src/services/followerService'
+import type * as FollowerService from '../src/services/followerService'
 
 let app: Express
+let isDue: typeof FollowerService.isDue
+let mergeSocialAccounts: typeof FollowerService.mergeSocialAccounts
 
 beforeAll(async () => {
   app = await setupApp('followers')
+  ;({ isDue, mergeSocialAccounts } = await import('../src/services/followerService'))
 })
 afterAll(teardownDb)
 afterEach(() => jest.restoreAllMocks())

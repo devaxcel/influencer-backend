@@ -174,7 +174,7 @@ export async function generateDailySuggestions(force = false) {
         query: discoveryQuery,
         search_depth: 'advanced',
         include_answer: true,
-        max_results: 15,
+        max_results: 5,
       }),
     })
     if (!discoveryResponse.ok) {
@@ -184,12 +184,24 @@ export async function generateDailySuggestions(force = false) {
       answer?: string
       results?: { title?: string; url?: string; content?: string }[]
     }
+    const compactDiscovery = {
+      answer: discovery.answer?.slice(0, 1000),
+      results: (discovery.results ?? []).slice(0, 5).map((result) => ({
+        title: result.title?.slice(0, 160),
+        url: result.url,
+        content: result.content?.slice(0, 700),
+      })),
+    }
+
+    const compactProfessions = professions.slice(0, 60).map((item) => item.slug)
+    const compactIndustries = industries.slice(0, 60).map((item) => item.slug)
+    const compactTopics = topics.slice(0, 80).map((item) => item.slug)
 
     const synthesisPrompt = `Turn the verified search evidence below into influencer suggestions.
 Use ONLY these taxonomy slugs:
-- professions: ${professions.map((item) => item.slug).join(', ') || '(none)'}
-- industries: ${industries.map((item) => item.slug).join(', ') || '(none)'}
-- topics: ${topics.map((item) => item.slug).join(', ') || '(none)'}
+- professions: ${compactProfessions.join(', ') || '(none)'}
+- industries: ${compactIndustries.join(', ') || '(none)'}
+- topics: ${compactTopics.join(', ') || '(none)'}
 
 Requirements:
 - Return exactly ${need} people: ${needNational} national (${homeCountry}) and ${needIntl} international.
@@ -202,7 +214,7 @@ Requirements:
 - Each object: {"name","scope","country","headline","bio","photoUrl","websiteUrl","username","followerCount","reason","profession","industry","topics":[],"socials":[{"platform":"instagram|youtube|tiktok|x|facebook|linkedin|snapchat|twitch|podcast|website","handle","url"}]}
 
 Search evidence:
-${JSON.stringify(discovery)}`
+${JSON.stringify(compactDiscovery)}`
 
     const synthesisResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -211,7 +223,7 @@ ${JSON.stringify(discovery)}`
       body: JSON.stringify({
         model: env.groqModel,
         temperature: 0,
-        max_tokens: 4000,
+        max_tokens: 2200,
         messages: [
           { role: 'system', content: 'You synthesize public web-search evidence. Never fabricate profiles, counts, images, or URLs.' },
           { role: 'user', content: synthesisPrompt },
@@ -222,12 +234,15 @@ ${JSON.stringify(discovery)}`
       throw new Error(`Groq API ${synthesisResponse.status}: ${await synthesisResponse.text()}`)
     }
     const synthesis = await synthesisResponse.json() as {
-      choices?: { message?: { content?: string } }[]
+      choices?: { message?: { content?: string; reasoning?: string } }[]
     }
-    const text = synthesis.choices?.[0]?.message?.content?.trim() ?? ''
+    const message = synthesis.choices?.[0]?.message
+    const text = (message?.content?.trim() || message?.reasoning?.trim() || '')
     const start = text.indexOf('[')
     const end = text.lastIndexOf(']')
-    if (start < 0 || end < 0) throw new Error('No JSON array in model response')
+    if (start < 0 || end < 0) {
+      throw new Error(`No JSON array in model response: ${text.slice(0, 1200)}`)
+    }
     const raw: unknown = JSON.parse(text.slice(start, end + 1))
     if (!Array.isArray(raw)) throw new Error('Model response is not an array')
 

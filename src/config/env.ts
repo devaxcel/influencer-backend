@@ -33,7 +33,7 @@ export const env = {
   youtubeApiKey: (process.env.YOUTUBE_API_KEY || '').trim(),
   // Optional: regex se number na nikle to Groq ka sasta model text se nikale
   groqApiKey: (process.env.GROQ_API_KEY || '').trim(),
-  groqModel: (process.env.GROQ_MODEL || 'llama-3.1-8b-instant').trim(),
+  groqModel: (process.env.GROQ_MODEL || 'openai/gpt-oss-20b').trim(),
   // Seconds between automatic suggestion refreshes (default 86400 = once per day)
   suggestionsIntervalSeconds: Math.max(
     1,

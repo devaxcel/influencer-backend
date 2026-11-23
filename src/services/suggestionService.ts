@@ -11,20 +11,10 @@ import { groqChat } from './groqChat'
 import { tavilyFollowers } from './followers/tavily'
 import { youtubeChannel } from './followers/youtube'
 
-// AI influencer suggestions: har SUGGESTIONS_INTERVAL ke baad 5 asal influencers ka ek group
-// (Pakistani + international). Tareeqa:
-//   1. Tavily web search: is dafa ke topic pe Pakistani aur international creators ki lists
-//   2. Groq: sirf usi search text mein se naam nikalta hai (naam text mein na ho to reject)
-//   3. Har naam ke social links Tavily se (asal instagram.com / youtube.com ... pages)
-//   4. Har account ke followers asal profile se: YouTube Data API, baqi Tavily (followerService
-//      wala hi code). Jo account verify na ho woh nahi rakhte; koi verify na ho to banda nahi
-// Koi number, link ya banda ghara nahi jata. Poore 5 na milein to group nahi banta, error
-// admin panel pe dikhta hai aur thori der baad dobara koshish hoti hai.
-
 export const GROUP_SIZE = 5
 const PLATFORM_ORDER: FollowerPlatform[] = ['youtube', 'instagram', 'tiktok', 'x', 'facebook']
 const SOCIAL_DOMAINS = ['instagram.com', 'youtube.com', 'tiktok.com', 'x.com', 'twitter.com', 'facebook.com']
-// Har dafa naya topic, taake har group mein naye log aayen
+
 const TOPICS = [
   'technology',
   'food',
@@ -41,22 +31,28 @@ const TOPICS = [
   'lifestyle and vlogging',
   'motivation and self improvement',
 ]
+
 const MAX_ROUNDS = 3
 const MAX_LOOKUPS_PER_PERSON = 4
 const GENERATION_BUDGET_MS = 240_000
 const STALE_LOCK_MS = 10 * 60 * 1000
 
 export const todayKey = () => new Date().toISOString().slice(0, 10)
+
 const norm = (value: string) =>
   value
     .normalize('NFKD')
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '')
+
 const nameTokens = (name: string) =>
   name
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((token) => token.length >= 3)
+
+// ✅ PLATFORMS array add kiya gaya taake 'website' type ka error khatam ho
+const PLATFORMS = ['instagram', 'youtube', 'tiktok', 'x', 'facebook', 'website'] as const
 
 const PROFILE_URL: Record<FollowerPlatform, (handle: string) => string> = {
   instagram: (h) => `https://www.instagram.com/${h}/`,
@@ -67,6 +63,14 @@ const PROFILE_URL: Record<FollowerPlatform, (handle: string) => string> = {
 }
 
 export const identityOf = (platform: string, handle: string) => `${platform}:${handle.toLowerCase()}`
+
+// ✅ Type alias add kiya gaya taake types compile hon
+interface RealPerson {
+  name: string
+  country?: string
+  wikiTitle?: string
+  altWikiTitles?: string[]
+}
 
 // ---------- Settings ----------
 
@@ -101,7 +105,7 @@ export function suggestionIntervalMs() {
 }
 
 async function wikipediaProfile(person: RealPerson) {
-  const titles = [person.wikiTitle, ...(person.altWikiTitles ?? [])]
+  const titles = [person.wikiTitle, ...(person.altWikiTitles ?? [])].filter(Boolean) as string[]
   for (const title of titles) {
     try {
       const response = await fetch(
@@ -109,7 +113,7 @@ async function wikipediaProfile(person: RealPerson) {
         { signal: AbortSignal.timeout(10_000) },
       )
       if (!response.ok) continue
-      const data = await response.json() as {
+      const data = (await response.json()) as {
         title?: string
         description?: string
         extract?: string
@@ -144,18 +148,21 @@ async function wikipediaProfile(person: RealPerson) {
     searchUrl.searchParams.set('pithumbsize', '500')
     const response = await fetch(searchUrl, { signal: AbortSignal.timeout(10_000) })
     if (response.ok) {
-      const data = await response.json() as {
-        query?: { pages?: Record<string, {
-          title?: string
-          extract?: string
-          thumbnail?: { source?: string }
-        }> }
+      const data = (await response.json()) as {
+        query?: {
+          pages?: Record<
+            string,
+            {
+              title?: string
+              extract?: string
+              thumbnail?: { source?: string }
+            }
+          >
+        }
       }
       const pages = Object.values(data.query?.pages ?? {})
       const match = pages.find((page) =>
-        `${page.title ?? ''} ${page.extract ?? ''}`
-          .toLowerCase()
-          .includes(norm(person.name)),
+        `${page.title ?? ''} ${page.extract ?? ''}`.toLowerCase().includes(norm(person.name)),
       )
       if (match) {
         return {
@@ -163,7 +170,7 @@ async function wikipediaProfile(person: RealPerson) {
           description: undefined,
           extract: match.extract,
           photoUrl: match.thumbnail?.source,
-          wikipediaUrl: `https://en.wikipedia.org/wiki/${encodeURIComponent(match.title ?? person.wikiTitle)}`,
+          wikipediaUrl: `https://en.wikipedia.org/wiki/${encodeURIComponent(match.title ?? person.wikiTitle ?? '')}`,
         }
       }
     }
@@ -173,12 +180,14 @@ async function wikipediaProfile(person: RealPerson) {
   return null
 }
 
-async function verifiedSocialProfiles(person: RealPerson): Promise<Array<{
-  platform: (typeof PLATFORMS)[number]
-  url: string
-  title?: string
-  content?: string
-}>> {
+async function verifiedSocialProfiles(person: RealPerson): Promise<
+  Array<{
+    platform: (typeof PLATFORMS)[number]
+    url: string
+    title?: string
+    content?: string
+  }>
+> {
   if (!env.tavilyApiKey) return []
   const query = `${person.name} ${person.country === 'PK' ? 'Pakistan' : ''} official Instagram YouTube TikTok profile`
   try {
@@ -194,37 +203,40 @@ async function verifiedSocialProfiles(person: RealPerson): Promise<Array<{
       }),
     })
     if (!response.ok) return []
-    const data = await response.json() as {
+    const data = (await response.json()) as {
       results?: { url?: string; title?: string; content?: string }[]
     }
-    return (data.results ?? []).flatMap((result) => {
-      if (!result.url) return []
-      let url = result.url
-      let platform: (typeof PLATFORMS)[number] = 'website'
-      try {
-        const host = new URL(url).hostname.toLowerCase()
-        if (host.includes('instagram.com')) platform = 'instagram'
-        else if (host.includes('youtube.com') || host.includes('youtu.be')) platform = 'youtube'
-        else if (host.includes('tiktok.com')) platform = 'tiktok'
-        else if (host.includes('x.com') || host.includes('twitter.com')) platform = 'x'
-        else if (host.includes('facebook.com')) platform = 'facebook'
-        else return []
-      } catch {
-        return []
-      }
-      const identityText = `${result.title ?? ''} ${result.url ?? ''}`.toLowerCase()
-      const nameParts = person.name
-        .toLowerCase()
-        .split(/\s+/)
-        .filter((part) => part.length >= 4)
-      if (
-        nameParts.length > 0 &&
-        !nameParts.some((part) => identityText.includes(part)) &&
-        !identityText.includes(person.name.toLowerCase())
-      ) return []
-      if (!/^https?:\/\//i.test(url)) url = `https://${url}`
-      return [{ platform, url, title: result.title, content: result.content }]
-    }).slice(0, 4)
+    return (data.results ?? [])
+      .flatMap((result) => {
+        if (!result.url) return []
+        let url = result.url
+        let platform: (typeof PLATFORMS)[number] = 'website'
+        try {
+          const host = new URL(url).hostname.toLowerCase()
+          if (host.includes('instagram.com')) platform = 'instagram'
+          else if (host.includes('youtube.com') || host.includes('youtu.be')) platform = 'youtube'
+          else if (host.includes('tiktok.com')) platform = 'tiktok'
+          else if (host.includes('x.com') || host.includes('twitter.com')) platform = 'x'
+          else if (host.includes('facebook.com')) platform = 'facebook'
+          else return []
+        } catch {
+          return []
+        }
+        const identityText = `${result.title ?? ''} ${result.url ?? ''}`.toLowerCase()
+        const nameParts = person.name
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((part) => part.length >= 4)
+        if (
+          nameParts.length > 0 &&
+          !nameParts.some((part) => identityText.includes(part)) &&
+          !identityText.includes(person.name.toLowerCase())
+        )
+          return []
+        if (!/^https?:\/\//i.test(url)) url = `https://${url}`
+        return [{ platform, url, title: result.title, content: result.content }]
+      })
+      .slice(0, 4)
   } catch {
     return []
   }
@@ -237,10 +249,8 @@ export function missingKeys() {
   ]
 }
 
-// Fail hone ke baad dobara koshish: interval ke baad, magar 10 minute se zyada intezar nahi
 const retryAfterMs = () => Math.min(suggestionIntervalMs(), 10 * 60 * 1000)
 
-// Agla group kab (admin panel ke liye). null = abhi (ya band)
 export async function generationStatus() {
   const setting = await ensureSetting()
   const now = Date.now()
@@ -276,7 +286,6 @@ function isDue(setting: Awaited<ReturnType<typeof ensureSetting>>, now: number) 
   return !setting.lastGeneratedAt || now - setting.lastGeneratedAt.getTime() >= suggestionIntervalMs()
 }
 
-// Ek waqt mein ek hi generation (Vercel ke kai functions / scheduler / admin panel)
 async function acquireLock() {
   const now = new Date()
   return SuggestionSetting.findOneAndUpdate(
@@ -298,7 +307,6 @@ export type GenerationResult =
   | { status: 'not_due' | 'busy' | 'disabled' }
   | { status: 'failed'; error: string }
 
-// Waqt ho gaya ho (ya force) to naya group banao. Kabhi throw nahi karta
 export async function generateIfDue(force = false): Promise<GenerationResult> {
   const setting = await ensureSetting()
   if (!force && !setting?.enabled) return { status: 'disabled' }
@@ -465,7 +473,6 @@ ${evidence}`
     const result = candidateSchema.safeParse(raw)
     if (!result.success) continue
     const candidate = result.data
-    // Naam search ke text mein hona chahiye (model ne apni yaad se na diya ho)
     if (!evidenceNorm.includes(norm(candidate.name))) continue
     out.push({ ...candidate, scope })
   }
@@ -487,7 +494,6 @@ interface Verified {
   total: number
 }
 
-// Naam se us ke asal profile links (Tavily ko sirf social sites pe dhoondo)
 async function findHandles(candidate: Candidate) {
   const tokens = nameTokens(candidate.name)
   const scored = new Map<FollowerPlatform, Map<string, number>>()
@@ -497,7 +503,6 @@ async function findHandles(candidate: Candidate) {
     scored.set(platform, byHandle)
   }
 
-  // Model ke diye hue handles (text mein the) bhi aazmaate hain, verify phir bhi hota hai
   for (const [platform, value] of Object.entries(candidate.handles ?? {})) {
     if (!value || !PLATFORM_ORDER.includes(platform as FollowerPlatform)) continue
     const handle = value.trim().replace(/^@+/, '').toLowerCase()
@@ -550,7 +555,6 @@ async function verifyCandidate(candidate: Candidate, known: Set<string>): Promis
     if (accounts.some((account) => account.platform === platform)) continue
     for (const option of options.filter((o) => o.platform === platform)) {
       if (lookups >= MAX_LOOKUPS_PER_PERSON) break
-      // Yeh account pehle se directory / kisi suggestion mein hai: banda hi chhor do
       if (known.has(identityOf(platform, option.handle))) return null
       lookups += 1
       const now = new Date()
@@ -559,7 +563,6 @@ async function verifyCandidate(candidate: Candidate, known: Set<string>): Promis
         try {
           const channel = await youtubeChannel(option.handle)
           if (!channel || channel.subscribers === null) continue
-          // Channel ka naam bande ke naam se mile (fan / doosre channel na hon)
           const title = channel.title.toLowerCase()
           if (tokens.length && !tokens.some((token) => title.includes(token))) continue
           accounts.push({
@@ -595,7 +598,6 @@ async function verifyCandidate(candidate: Candidate, known: Set<string>): Promis
   return { candidate, accounts, photoUrl, total }
 }
 
-// Directory aur purani suggestions mein jo log / accounts pehle se hain
 async function knownIdentities() {
   const [people, past] = await Promise.all([
     Person.find().select('name socialAccounts.platform socialAccounts.handle').limit(5000).lean(),
@@ -603,7 +605,10 @@ async function knownIdentities() {
   ])
   const names = new Set<string>()
   const handles = new Set<string>()
-  for (const item of [...people.map((p) => ({ name: p.name, socials: p.socialAccounts })), ...past]) {
+  for (const item of [
+    ...people.map((p) => ({ name: p.name, socials: p.socialAccounts })),
+    ...past,
+  ]) {
     names.add(norm(item.name))
     for (const social of item.socials ?? []) {
       if (social.handle) handles.add(identityOf(social.platform, social.handle))
@@ -622,7 +627,6 @@ async function loadTaxonomy(): Promise<Taxonomy> {
   return { professions: pick(professions), industries: pick(industries), topics: pick(topics) }
 }
 
-// Ek group ke 5 tasdeeq shuda log (warna throw)
 async function buildGroup(cycle: number) {
   const started = Date.now()
   const nationalNeed = env.suggestionsNationalCount
@@ -656,7 +660,6 @@ async function buildGroup(cycle: number) {
         return Boolean(country && /^[A-Z]{2}$/.test(country) && country !== 'PK')
       })
 
-      // 3-3 ke batch mein verify, jab tak is scope ke log poore na hon
       for (let i = 0; i < candidates.length && verified[scope].length < need; i += 3) {
         if (Date.now() - started > GENERATION_BUDGET_MS) break
         const batch = candidates.slice(i, i + 3)
@@ -672,10 +675,7 @@ async function buildGroup(cycle: number) {
     }
   }
 
-  const group = [
-    ...verified.national.slice(0, nationalNeed),
-    ...verified.international.slice(0, intlNeed),
-  ]
+  const group = [...verified.national.slice(0, nationalNeed), ...verified.international.slice(0, intlNeed)]
   if (group.length < GROUP_SIZE) {
     throw new Error(
       `Only ${group.length} of ${GROUP_SIZE} influencers could be verified with real social accounts ` +
@@ -695,10 +695,19 @@ async function buildGroup(cycle: number) {
       name: candidate.name.trim(),
       scope: candidate.scope,
       country: candidate.scope === 'national' ? 'PK' : candidate.country!.toUpperCase(),
-      headline: candidate.headline?.trim() || `${candidate.scope === 'national' ? 'Pakistani' : 'International'} content creator`,
-      reason: candidate.reason?.trim() || `Verified on ${accounts.map((a) => a.platform).join(', ')}`,
-      profession: candidate.profession && slugs.professions.has(candidate.profession) ? candidate.profession : undefined,
-      industry: candidate.industry && slugs.industries.has(candidate.industry) ? candidate.industry : undefined,
+      headline:
+        candidate.headline?.trim() ||
+        `${candidate.scope === 'national' ? 'Pakistani' : 'International'} content creator`,
+      reason:
+        candidate.reason?.trim() || `Verified on ${accounts.map((a) => a.platform).join(', ')}`,
+      profession:
+        candidate.profession && slugs.professions.has(candidate.profession)
+          ? candidate.profession
+          : undefined,
+      industry:
+        candidate.industry && slugs.industries.has(candidate.industry)
+          ? candidate.industry
+          : undefined,
       topics: (candidate.topics ?? []).filter((t) => slugs.topics.has(t)).slice(0, 3),
       photoUrl,
       username: top.handle,

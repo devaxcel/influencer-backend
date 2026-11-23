@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express'
+import { assertWithinPlan } from '../services/billingService'
 import { isValidObjectId, type Types } from 'mongoose'
 import '../types/express'
 import { OPEN_REPRESENTATION_STATUSES } from '../constants/manager'
@@ -244,6 +245,8 @@ export async function requestRepresentation(req: Request, res: Response) {
   if (await Representation.exists({ person: person._id, manager: req.user!.id, status: { $in: ['invited', 'requested'] } })) {
     throw new AppError(409, 'ALREADY_PENDING', 'There is already an open request with this talent')
   }
+  // Free plan: kitne talents (jure hue + intezar wale)
+  await assertWithinPlan(req.user!, 'talents')
 
   const rep = await Representation.create({
     manager: req.user!.id,
@@ -271,6 +274,8 @@ export async function managerRespond(req: Request, res: Response) {
     if (!(await isApprovedManager(req.user!.id))) {
       throw new AppError(403, 'MANAGER_NOT_VERIFIED', 'Get your manager account verified first')
     }
+    // Free plan: jure hue talents ki hadd
+    await assertWithinPlan(req.user!, 'talents', { activeOnly: true })
     await activate(rep)
   } else {
     rep.set({ status: 'declined', respondedAt: new Date() })

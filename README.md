@@ -426,6 +426,37 @@ Nobody types follower counts by hand: `followers` sent in `socialAccounts` is ig
 - **Credits**: about 1 Tavily credit per non-YouTube account per week. 40 talents with 4 such accounts each use about 690 of the 1,000 free monthly credits.
 - Without a key that platform is skipped and nothing changes. Run the cron by hand: `curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:5000/api/cron/followers`.
 
+## Payments (Polar.sh)
+
+Influnexa stays free. Each account type can buy a monthly **Pro** plan through [Polar](https://polar.sh). Polar is the merchant of record: it shows the checkout page, charges the card, handles tax and invoices, and lets customers cancel from its portal.
+
+| Account | Free plan | Pro plan |
+| --- | --- | --- |
+| Business | 3 hire requests a month, 1 open campaign at a time | Unlimited hire requests and campaigns |
+| Manager | 2 talents (linked plus pending) | Unlimited talents |
+| Talent | 5 campaign applications a month | Unlimited applications |
+
+These are always free: search, profiles, answering hire requests, agreements and reviews. The limits live in `src/constants/billing.ts`.
+
+The limits apply **only** to an account type whose `POLAR_PRODUCT_*` is set together with `POLAR_ACCESS_TOKEN`. With nothing set, everything stays free and unlimited, as before. Over a limit, the API answers `402` with `PLAN_LIMIT`, and the frontend shows an Upgrade link.
+
+| Method | Path | Who | What |
+| --- | --- | --- | --- |
+| GET | `/api/billing/plans` | public | Pro plan per account type: name, price (from the Polar product), free limits |
+| GET | `/api/billing/me` | logged in | my plan, subscription and this month's usage (`?sync=1` asks Polar directly) |
+| POST | `/api/billing/checkout` | business, manager, talent | returns `{ url }` of a Polar checkout |
+| POST | `/api/billing/portal` | logged in | returns `{ url }` of the Polar customer portal (card, cancel, invoices) |
+| POST | `/api/billing/webhook` | Polar | subscription events, signed (Standard Webhooks); stored in `Subscription` |
+
+### Setup
+1. Create an organization on [sandbox.polar.sh](https://sandbox.polar.sh) for testing, or on [polar.sh](https://polar.sh) for real payments.
+2. Under **Products**, create one monthly subscription per plan (Business Pro, Manager Pro, Talent Pro), then copy each product ID.
+3. Under **Settings → Developers**, create an access token.
+4. Under **Settings → Webhooks**, add the endpoint `https://<backend>/api/billing/webhook` with format **Raw** and the `subscription.*` events, then copy its secret.
+5. Set `POLAR_ACCESS_TOKEN`, `POLAR_SERVER` (`sandbox` or `production`), `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_BUSINESS_PRO`, `POLAR_PRODUCT_MANAGER_PRO` and `POLAR_PRODUCT_TALENT_PRO` (see `.env.example`).
+
+After paying, Polar sends the user back to `/dashboard/billing`. That page asks the backend to sync, so the plan shows Pro even before the webhook arrives.
+
 ## Caching
 
 Public GETs send `Cache-Control: public, max-age=0, must-revalidate` (the browser always checks) and `CDN-Cache-Control` so Vercel's CDN can answer for 60s (people) or 1h (taxonomy). Errors are `no-store`.
@@ -445,6 +476,8 @@ For **photo uploads on Cloudinary** set `CLOUDINARY_URL` (or `CLOUDINARY_CLOUD_N
 For **automatic followers** set `YOUTUBE_API_KEY` (Google Cloud Console → *APIs & Services → Library → YouTube Data API v3 → Enable*, then *Credentials → Create credentials → API key*, and restrict the key to *YouTube Data API v3*), `TAVILY_API_KEY` (sign up at app.tavily.com, the key is on the dashboard; the free plan has 1,000 credits a month) and `CRON_SECRET` (any long random string, Vercel sends it to the cron). `GROQ_API_KEY` (console.groq.com → API Keys) is optional, and `GROQ_MODEL` defaults to `llama-3.1-8b-instant`. Vercel's Hobby plan runs cron jobs once a day, which is what `vercel.json` asks for.
 
 For **emails** (password reset codes and agreement signing codes) the backend uses the **Resend** API (`src/services/mailService.ts`). Set `RESEND_API_KEY` (resend.com → *API Keys* → *Create API key*, sending access) and `MAIL_FROM`, for example `Influnexa <info@influnexa.com>`. The domain in `MAIL_FROM` must be verified in Resend (*Domains* → add the DNS records it shows). Until then you can leave `MAIL_FROM` empty: emails then go from Resend's test sender `onboarding@resend.dev`, which only delivers to the email address of your own Resend account. Without `RESEND_API_KEY` the code is printed in the server terminal in development, and production answers 503 `EMAIL_NOT_CONFIGURED`; if Resend refuses a message (for example an unverified domain) the API answers 503 `EMAIL_FAILED` and the reason is in the server log.
+
+For **payments (Pro plans)** set `POLAR_ACCESS_TOKEN`, `POLAR_SERVER`, `POLAR_WEBHOOK_SECRET` and the `POLAR_PRODUCT_*` IDs, see *Payments (Polar.sh)* above.
 
 ## Admin panel API (admin only)
 

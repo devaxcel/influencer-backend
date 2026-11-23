@@ -52,6 +52,21 @@ export const env = {
   followersRefreshLimitHours: Math.max(0, Number(process.env.FOLLOWERS_REFRESH_LIMIT_HOURS) || 0),
   // Vercel Cron yahi secret "Authorization: Bearer ..." mein bhejta hai
   cronSecret: (process.env.CRON_SECRET || '').trim(),
+  // Payments (Polar.sh). Token + kam az kam ek product ho to woh plan chalu, warna sab free.
+  // polar.sh -> Settings -> Developers -> New token. Sandbox mein test: sandbox.polar.sh
+  polarAccessToken: (process.env.POLAR_ACCESS_TOKEN || '').trim(),
+  // Webhook ka secret: Settings -> Webhooks -> Add endpoint (URL: <backend>/api/billing/webhook)
+  polarWebhookSecret: (process.env.POLAR_WEBHOOK_SECRET || '').trim(),
+  // 'sandbox' (test, default) ya 'production' (asal paise)
+  polarServer: ((process.env.POLAR_SERVER || 'sandbox').trim().toLowerCase() === 'production'
+    ? 'production'
+    : 'sandbox') as 'production' | 'sandbox',
+  // Har account type ka Pro plan (Polar product ki ID, mahana subscription)
+  polarProducts: {
+    business: (process.env.POLAR_PRODUCT_BUSINESS_PRO || '').trim(),
+    representative: (process.env.POLAR_PRODUCT_MANAGER_PRO || '').trim(),
+    talent: (process.env.POLAR_PRODUCT_TALENT_PRO || '').trim(),
+  },
 }
 
 export const isProduction = env.nodeEnv === 'production'

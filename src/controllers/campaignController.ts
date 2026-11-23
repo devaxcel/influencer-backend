@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express'
+import { assertWithinPlan } from '../services/billingService'
 import { isValidObjectId, type QueryFilter, type Types } from 'mongoose'
 import '../types/express'
 import { BusinessProfile } from '../models/BusinessProfile'
@@ -193,6 +194,7 @@ export async function listMyCampaigns(req: Request, res: Response) {
 export async function createCampaign(req: Request, res: Response) {
   const input = parseOrThrow(createCampaignSchema, req.body ?? {})
   if (input.status === 'open' && !(await isVerifiedBusiness(req.user!.id))) throw notVerifiedError()
+  if (input.status === 'open') await assertWithinPlan(req.user!, 'openCampaigns')
   const campaign = await Campaign.create({
     ...input,
     budget: input.budget ?? undefined,
@@ -231,6 +233,7 @@ export async function updateCampaign(req: Request, res: Response) {
   if (status && status !== campaign.status) {
     if (status === 'open') {
       if (!(await isVerifiedBusiness(req.user!.id))) throw notVerifiedError()
+      await assertWithinPlan(req.user!, 'openCampaigns')
       campaign.publishedAt = campaign.publishedAt ?? new Date()
       campaign.closedAt = undefined
     }
@@ -356,6 +359,8 @@ export async function applyToCampaign(req: Request, res: Response) {
   if (existing && existing.status !== 'withdrawn') {
     throw new AppError(409, 'ALREADY_APPLIED', 'You already applied to this campaign')
   }
+  // Free plan: mahine ki applications ki hadd (payments chalu hon to)
+  await assertWithinPlan(req.user!, 'applicationsPerMonth')
   const application = existing ?? new CampaignApplication({
     campaign: campaign._id,
     business: campaign.owner,

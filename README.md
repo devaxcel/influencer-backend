@@ -457,6 +457,38 @@ The limits apply **only** to an account type whose `POLAR_PRODUCT_*` is set toge
 
 After paying, Polar sends the user back to `/dashboard/billing`. That page asks the backend to sync, so the plan shows Pro even before the webhook arrives.
 
+## AI influencer suggestions (admin)
+
+Every `SUGGESTIONS_INTERVAL` (for example `3s` for testing or `1d` for production), the backend makes a **group of 5 real influencers**: 3 from Pakistan and 2 from other countries by default (`SUGGESTIONS_NATIONAL_COUNT`). The admin sees each group under *Admin → AI suggestions*, ticks the people they want and adds them with one click.
+
+How a group is made (`src/services/suggestionService.ts`):
+1. **Tavily** searches the web for top Pakistani and international creators. Each group uses a new topic (tech, food, cricket, comedy and so on).
+2. **Groq** (`GROQ_MODEL`) reads only that search text and lists the people in it. A name that is not in the text is dropped.
+3. **Tavily** finds each person's real profile links on instagram.com, youtube.com, tiktok.com, x.com and facebook.com.
+4. **Follower counts** come from the real profile:
+   - YouTube: the YouTube Data API. The channel name must match the person, and the channel photo becomes the profile photo.
+   - Instagram, TikTok, X and Facebook: the same Tavily follower lookup the platform already uses.
+   - An account that can't be verified is left out. A person with no verified account, or with fewer than `SUGGESTIONS_MIN_FOLLOWERS` followers, is skipped.
+5. People and accounts already in the directory or in earlier suggestions are skipped. If 5 verified people can't be found, no group is saved. The reason shows in the admin panel, and the backend tries again after `min(interval, 10 minutes)`.
+
+Adding a suggestion creates the public profile with its social links, handles and verified follower counts (with source links). The admin types nothing, and the followers show on the public profile and talent list at once. After that, the weekly followers cron keeps the counts fresh.
+
+**When groups are made:**
+- `npm run dev` / `npm start`: a scheduler inside the server checks every few seconds (at most every minute). Set `SUGGESTIONS_SCHEDULER=off` to stop it.
+- Vercel has no background timer. While the admin page is open, it calls `POST /api/admin/suggestions/tick` when the next group is due. `GET /api/cron/suggestions` (Vercel Cron, daily on the Hobby plan) also covers days when nobody opens the panel.
+
+| Method | Path | What |
+| --- | --- | --- |
+| GET | `/api/admin/suggestions` | groups (newest first), plus `nextGenerationAt`, `generating`, `lastError`, `missingKeys` |
+| POST | `/api/admin/suggestions/tick` | makes a group if one is due, then returns the list |
+| POST | `/api/admin/suggestions/generate` | makes a group now |
+| POST | `/api/admin/suggestions/approve` | `{ ids: [...] }`: adds the selected people to the directory |
+| POST | `/api/admin/suggestions/:id/approve` | adds one person |
+| POST | `/api/admin/suggestions/:id/dismiss` | hides one suggestion |
+| GET, PATCH | `/api/admin/suggestions/settings` | `{ enabled }` turns automatic groups on or off |
+
+**Credits:** one group costs roughly 30 to 50 Tavily credits (search plus follower checks). The free plan has 1,000 a month, so keep `3s` for short tests only.
+
 ## Caching
 
 Public GETs send `Cache-Control: public, max-age=0, must-revalidate` (the browser always checks) and `CDN-Cache-Control` so Vercel's CDN can answer for 60s (people) or 1h (taxonomy). Errors are `no-store`.

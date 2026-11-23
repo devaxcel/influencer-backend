@@ -4,6 +4,8 @@ import {
   listSuggestions,
   generateNow,
   approveSuggestion,
+  approveMany,
+  tickSuggestions,
   dismissSuggestion,
   cronGenerate,
   getSuggestionSettings,
@@ -17,6 +19,8 @@ adminSuggestionRouter.get('/', listSuggestions)
 adminSuggestionRouter.get('/settings', getSuggestionSettings)
 adminSuggestionRouter.patch('/settings', updateSuggestionSettings)
 adminSuggestionRouter.post('/generate', generateNow)
+adminSuggestionRouter.post('/tick', tickSuggestions)
+adminSuggestionRouter.post('/approve', approveMany)
 adminSuggestionRouter.post('/:id/approve', approveSuggestion)
 adminSuggestionRouter.post('/:id/dismiss', dismissSuggestion)
 

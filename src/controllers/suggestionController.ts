@@ -19,7 +19,6 @@ import { SOCIAL_PLATFORMS, type SocialPlatform } from '../constants/people'
 import type { Model } from 'mongoose'
 import type { ITaxonomyItem } from '../models/taxonomy'
 
-// Admin panel ke liye: aakhri groups (har generation ke 5 log), naye pehle
 const GROUPS_SHOWN = 12
 
 async function listPayload() {
@@ -30,9 +29,10 @@ async function listPayload() {
       .lean(),
     generationStatus(),
   ])
-  const groups: { batchId: string; generatedAt: Date; suggestions: typeof items }[] = []
+  
+  const groups: { batchId: string; generatedAt: Date; suggestions: any[] }[] = []
+  
   for (const item of items) {
-    // Purani suggestions (group se pehle ki) din ke hisaab se
     const batchId = item.batchId ?? `day-${item.date}`
     let group = groups.find((g) => g.batchId === batchId)
     if (!group) {
@@ -42,6 +42,7 @@ async function listPayload() {
     }
     group.suggestions.push(item)
   }
+  
   for (const group of groups) {
     group.suggestions.sort((a, b) =>
       a.scope === b.scope ? (b.followerCount ?? 0) - (a.followerCount ?? 0) : a.scope === 'national' ? -1 : 1,
@@ -50,19 +51,15 @@ async function listPayload() {
   return { ...status, groups, suggestions: groups.flatMap((group) => group.suggestions) }
 }
 
-// GET /api/admin/suggestions -> groups + generation ka haal (yahan kuch generate nahi hota)
 export async function listSuggestions(_req: Request, res: Response) {
   return sendSuccess(res, await listPayload())
 }
 
-// POST /api/admin/suggestions/tick -> waqt ho gaya ho to naya group bana do, phir list.
-// Admin panel khula ho to har interval pe yahi chalata hai (Vercel pe koi background timer nahi)
 export async function tickSuggestions(_req: Request, res: Response) {
   const result = await generateIfDue(false)
   return sendSuccess(res, { ...(await listPayload()), result })
 }
 
-// POST /api/admin/suggestions/generate -> abhi naya group (interval ka intezar nahi)
 export async function generateNow(_req: Request, res: Response) {
   const result = await generateIfDue(true)
   if (result.status === 'busy') {
@@ -81,8 +78,6 @@ async function validSlugs(model: Model<ITaxonomyItem>, slugs: (string | undefine
   return items.map((item) => item._id)
 }
 
-// Suggestion -> Person. Social links aur asal followers (jo generation pe verify hue) saath
-// jaate hain: admin ko kuch likhna nahi parta, aur public page pe foran followers dikhte hain
 async function approveOne(suggestion: ISuggestion) {
   const socialAccounts: ISocialAccount[] = []
   for (const social of suggestion.socials) {
@@ -90,6 +85,7 @@ async function approveOne(suggestion: ISuggestion) {
     const platform = social.platform as SocialPlatform
     const handle = normalizeHandle(platform, social.handle ?? suggestion.username, social.url)
     const account: ISocialAccount = { platform, url: social.url, handle }
+    
     if (typeof social.followers === 'number' && isFollowerPlatform(platform)) {
       const when = social.followersUpdatedAt ?? new Date()
       Object.assign(account, {
@@ -120,14 +116,16 @@ async function approveOne(suggestion: ISuggestion) {
   }
 
   const [professions, industries, topics, slug] = await Promise.all([
-    validSlugs(Profession, [suggestion.profession]),
-    validSlugs(Industry, [suggestion.industry]),
-    validSlugs(Topic, suggestion.topics),
+    validSlugs(Profession, [suggestion.profession as any]),
+    validSlugs(Industry, [suggestion.industry as any]),
+    validSlugs(Topic, suggestion.topics as any),
     generateUniquePersonSlug(suggestion.name),
   ])
+
   const sources = [
     ...new Set(suggestion.socials.map((s) => s.followersSourceUrl || s.url).filter(Boolean)),
   ]
+
   const person = await Person.create({
     name: suggestion.name,
     slug,
@@ -148,7 +146,7 @@ async function approveOne(suggestion: ISuggestion) {
     })),
     visibility: 'visible',
   })
-  // Purani suggestions (jin ke followers verify nahi hue) ke accounts abhi dhoondo
+  
   await refreshNewAccounts(person)
 
   suggestion.status = 'approved'
@@ -166,14 +164,12 @@ async function findPending(id: string) {
   return suggestion
 }
 
-// POST /api/admin/suggestions/:id/approve -> ek influencer directory mein
 export async function approveSuggestion(req: Request, res: Response) {
   const suggestion = await findPending(String(req.params.id))
   const person = await approveOne(suggestion)
   return sendSuccess(res, { suggestion, person })
 }
 
-// POST /api/admin/suggestions/approve { ids: [...] } -> chune hue sab, ek click mein
 export async function approveMany(req: Request, res: Response) {
   const ids: unknown = req.body?.ids
   if (!Array.isArray(ids) || ids.length === 0 || ids.length > 50 || !ids.every((id) => typeof id === 'string')) {
@@ -194,6 +190,28 @@ export async function approveMany(req: Request, res: Response) {
       })
     }
   }
+  return sendSuccess(res, { results, added: results.filter((r) => r.ok).length })
+}
+
+// ✅ Naya function jo router mein missing tha: approveSuggestionGroup
+export async function approveSuggestionGroup(req: Request, res: Response) {
+  const groupId = String(req.params.groupId)
+  const suggestions = await Suggestion.find({ batchId: groupId, status: 'pending' })
+  
+  const results: { id: string; ok: boolean; error?: string }[] = []
+  for (const suggestion of suggestions) {
+    try {
+      await approveOne(suggestion)
+      results.push({ id: String(suggestion._id), ok: true })
+    } catch (error) {
+      results.push({
+        id: String(suggestion._id),
+        ok: false,
+        error: error instanceof Error ? error.message : 'Failed',
+      })
+    }
+  }
+  
   return sendSuccess(res, { results, added: results.filter((r) => r.ok).length })
 }
 
@@ -220,7 +238,6 @@ export async function updateSuggestionSettings(req: Request, res: Response) {
   return sendSuccess(res, { enabled: setting!.enabled })
 }
 
-// GET /api/cron/suggestions -> Vercel Cron: waqt ho to naya group
 export async function cronGenerate(req: Request, res: Response) {
   if (!env.cronSecret || req.headers.authorization !== `Bearer ${env.cronSecret}`) {
     return sendError(res, 401, 'UNAUTHORIZED', 'Bad cron secret')

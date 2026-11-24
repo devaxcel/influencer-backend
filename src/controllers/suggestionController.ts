@@ -149,9 +149,10 @@ async function approveOne(suggestion: ISuggestion) {
   
   await refreshNewAccounts(person)
 
-  suggestion.status = 'approved'
-  suggestion.personId = person._id
-  await suggestion.save()
+  // ✅ NAYA LOGIC: Suggestion ko update karne ke bajaye, usko DELETE kar dein
+  // Taake database clean rahe aur duplicate na ho
+  await Suggestion.findByIdAndDelete(suggestion._id)
+
   return person
 }
 
@@ -193,7 +194,6 @@ export async function approveMany(req: Request, res: Response) {
   return sendSuccess(res, { results, added: results.filter((r) => r.ok).length })
 }
 
-// ✅ Naya function jo router mein missing tha: approveSuggestionGroup
 export async function approveSuggestionGroup(req: Request, res: Response) {
   const groupId = String(req.params.groupId)
   const suggestions = await Suggestion.find({ batchId: groupId, status: 'pending' })

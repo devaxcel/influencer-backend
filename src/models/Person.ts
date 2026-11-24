@@ -1,9 +1,11 @@
 import { Schema, model, type Types } from 'mongoose'
 import {
+  FOLLOWER_STATUSES,
   LANGUAGE_CODES,
   PROFILE_STATUSES,
   SOCIAL_PLATFORMS,
   SOURCE_TYPES,
+  type FollowerStatus,
   type ProfileStatus,
   type SocialPlatform,
   type SourceType,
@@ -23,8 +25,16 @@ export interface ISocialAccount {
   platform: SocialPlatform
   handle?: string
   url: string
+  // Khud aate hain (talent haath se nahi likhta). Andaza: public profile se
   followers?: number
   engagementRate?: number
+  // Number kis page se mila aur kab
+  followersSourceUrl?: string
+  followersUpdatedAt?: Date
+  // Aakhri koshish kab hui, kya nateeja, aur lagatar kitni dafa nahi mila
+  followersCheckedAt?: Date
+  followersStatus?: FollowerStatus
+  followersFailCount?: number
 }
 
 export interface ISourceRecord {
@@ -93,6 +103,8 @@ export interface IPerson {
   city?: string
   websiteUrl?: string
   socialAccounts: ISocialAccount[]
+  // Followers aakhri dafa kab dhoonde (YouTube / Tavily): din mein sirf ek dafa
+  followersRefreshedAt?: Date | null
   // Saare social accounts ke followers ka jor (search filter ke liye)
   totalFollowers: number
   claimedBy: Types.ObjectId | null
@@ -118,6 +130,11 @@ const socialAccountSchema = new Schema<ISocialAccount>(
     url: { type: String, required: true, trim: true },
     followers: { type: Number, min: 0 },
     engagementRate: { type: Number, min: 0, max: 100 },
+    followersSourceUrl: { type: String, trim: true },
+    followersUpdatedAt: { type: Date },
+    followersCheckedAt: { type: Date },
+    followersStatus: { type: String, enum: FOLLOWER_STATUSES },
+    followersFailCount: { type: Number, min: 0 },
   },
   { _id: false },
 )
@@ -194,6 +211,7 @@ const personSchema = new Schema<IPerson>(
     city: { type: String, trim: true },
     websiteUrl: { type: String, trim: true },
     socialAccounts: { type: [socialAccountSchema], default: [] },
+    followersRefreshedAt: { type: Date, default: null },
     totalFollowers: { type: Number, default: 0 },
     claimedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     representedBy: [{ type: Schema.Types.ObjectId, ref: 'User' }],
@@ -223,6 +241,8 @@ personSchema.index({ industries: 1 })
 personSchema.index({ topics: 1 })
 personSchema.index({ country: 1, city: 1 })
 personSchema.index({ 'availability.isOpen': 1, 'availability.openTo': 1 })
+// Roz ka cron: jin accounts ko sab se der se dekha, woh pehle
+personSchema.index({ 'socialAccounts.followersCheckedAt': 1 })
 
 // Save se pehle followers ka jor dobara nikalo
 personSchema.pre('save', function () {

@@ -11,11 +11,11 @@ function layout(title: string, body: string) {
   return `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title></head>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:32px 16px;">
+<body style="margin:0;padding:0;background:#f4f0fd;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f0fd;padding:32px 16px;">
 <tr><td align="center">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
-<tr><td style="background:#111827;padding:22px 32px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e6dff7;">
+<tr><td style="background:#160f2e;padding:22px 32px;border-bottom:4px solid #8b3df5;">
 <span style="font-size:18px;font-weight:700;color:#ffffff;letter-spacing:-0.2px;">${brand}</span>
 </td></tr>
 <tr><td style="padding:32px;">${body}</td></tr>
@@ -33,8 +33,8 @@ export function passwordResetCodeEmail(to: string, name: string, code: string, m
     subject,
     `<h1 style="margin:0 0 8px;font-size:22px;font-weight:700;">Reset your password</h1>
 <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#4b5563;">Hi ${escapeHtml(name)}, we received a request to reset the password for your account. Enter this code to continue:</p>
-<div style="margin:0 0 24px;padding:20px;border-radius:12px;background:#f9fafb;border:1px solid #e5e7eb;text-align:center;">
-<span style="font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:34px;font-weight:700;letter-spacing:10px;color:#111827;">${code}</span>
+<div style="margin:0 0 24px;padding:20px;border-radius:12px;background:#f6f1ff;border:1px solid #e6dff7;text-align:center;">
+<span style="font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:34px;font-weight:700;letter-spacing:10px;color:#4c1d95;">${code}</span>
 </div>
 <p style="margin:0 0 8px;font-size:14px;line-height:1.6;color:#4b5563;">This code expires in <strong>${minutes} minutes</strong> and can only be used once.</p>
 <p style="margin:0;font-size:14px;line-height:1.6;color:#4b5563;">Didn't ask for this? You can safely ignore this email. Your password won't change. Never share this code with anyone, including our team.</p>`,
@@ -55,7 +55,7 @@ export function passwordChangedEmail(to: string, name: string): MailMessage {
     `<h1 style="margin:0 0 8px;font-size:22px;font-weight:700;">Password changed</h1>
 <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#4b5563;">Hi ${escapeHtml(name)}, the password for your account was just reset. You've been signed out on all other devices.</p>
 <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#4b5563;">If this wasn't you, reset your password right away and contact our support team.</p>
-<a href="${escapeHtml(env.clientUrl)}/forgot-password" style="display:inline-block;padding:12px 20px;border-radius:10px;background:#111827;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;">Secure my account</a>`,
+<a href="${escapeHtml(env.clientUrl)}/forgot-password" style="display:inline-block;padding:12px 20px;border-radius:10px;background:#6d28d9;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;">Secure my account</a>`,
   )
   const text = `Hi ${name},
 
@@ -77,8 +77,8 @@ export function agreementSignCodeEmail(
     subject,
     `<h1 style="margin:0 0 8px;font-size:22px;font-weight:700;">Sign your agreement</h1>
 <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#4b5563;">Hi ${escapeHtml(name)}, enter this code to sign the agreement <strong>${escapeHtml(title)}</strong> on ${escapeHtml(env.platformName)}:</p>
-<div style="margin:0 0 24px;padding:20px;border-radius:12px;background:#f9fafb;border:1px solid #e5e7eb;text-align:center;">
-<span style="font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:34px;font-weight:700;letter-spacing:10px;color:#111827;">${code}</span>
+<div style="margin:0 0 24px;padding:20px;border-radius:12px;background:#f6f1ff;border:1px solid #e6dff7;text-align:center;">
+<span style="font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:34px;font-weight:700;letter-spacing:10px;color:#4c1d95;">${code}</span>
 </div>
 <p style="margin:0 0 8px;font-size:14px;line-height:1.6;color:#4b5563;">This code expires in <strong>${minutes} minutes</strong>. Entering it is your electronic signature on the version of the agreement you are looking at.</p>
 <p style="margin:0;font-size:14px;line-height:1.6;color:#4b5563;">Didn't ask for this? Ignore this email and never share the code with anyone.</p>`,

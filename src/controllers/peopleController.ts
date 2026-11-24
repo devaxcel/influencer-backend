@@ -13,6 +13,12 @@ import {
   resolveTaxonomySlugs,
 } from '../services/personService'
 import { activeRepresentation, canManageProfile } from '../services/representationService'
+import {
+  mergeSocialAccounts,
+  nextRefreshAt,
+  refreshFollowers,
+  refreshNewAccounts,
+} from '../services/followerService'
 import { personRatings } from './agreementController'
 import { AppError } from '../utils/AppError'
 import { sendSuccess } from '../utils/apiResponse'
@@ -173,6 +179,7 @@ export async function createPerson(req: Request, res: Response) {
 
   const person = await Person.create({
     ...input,
+    socialAccounts: mergeSocialAccounts([], input.socialAccounts ?? []),
     slug,
     professions,
     industries,
@@ -181,6 +188,7 @@ export async function createPerson(req: Request, res: Response) {
       ? input.sourceRecords
       : [{ sourceType: 'admin', note: 'Created by admin' }],
   })
+  await refreshNewAccounts(person)
 
   await person.populate(TAXONOMY_POPULATE)
   sendSuccess(res, { person }, 201)
@@ -202,15 +210,7 @@ export async function updatePerson(req: Request, res: Response) {
   const person = await Person.findById(id)
   if (!person) throw new AppError(404, 'NOT_FOUND', 'Profile not found')
 
-  const user = req.user!
-  const isAdmin = user.role === 'admin'
-  // Manager bhi, agar talent ne "manageProfile" ki ijazat di ho (owner jaisa hi)
-  const isOwner =
-    person.claimedBy?.toString() === user.id ||
-    (user.role === 'representative' && (await canManageProfile(user.id, id)))
-  if (!isAdmin && !isOwner) {
-    throw new AppError(403, 'FORBIDDEN', 'You can only edit your own profile')
-  }
+  const { isAdmin, isOwner } = await editAccess(req, person)
 
   // Verified haath se nahi badalta: claim approve hone pe khud lagta hai
   if ('verified' in (req.body ?? {}) && Boolean(req.body.verified) !== person.verified) {
@@ -260,8 +260,12 @@ export async function updatePerson(req: Request, res: Response) {
     )
   }
 
-  const { professions, industries, topics, ...rest } = input
+  const { professions, industries, topics, socialAccounts, ...rest } = input
   person.set(rest)
+  // Pehle se jo accounts the un ka khud aaya followers data na mite
+  if (socialAccounts) {
+    person.socialAccounts = mergeSocialAccounts(person.socialAccounts, socialAccounts)
+  }
   // Nayi photo lagi to purani photo ka credit ab sahi nahi
   if (person.isModified('photoUrl')) person.photoCredit = undefined
 
@@ -276,8 +280,59 @@ export async function updatePerson(req: Request, res: Response) {
   }
 
   await person.save()
+  // Naye ya badle hue accounts ke followers foran
+  await refreshNewAccounts(person)
   await person.populate(TAXONOMY_POPULATE)
   sendSuccess(res, { person })
+}
+
+// Admin, profile ka maalik, ya woh manager jise talent ne "manageProfile" ki ijazat di ho
+async function editAccess(
+  req: Request,
+  person: { _id: Types.ObjectId; claimedBy: Types.ObjectId | null },
+) {
+  const user = req.user!
+  const isAdmin = user.role === 'admin'
+  const isOwner =
+    person.claimedBy?.toString() === user.id ||
+    (user.role === 'representative' && (await canManageProfile(user.id, String(person._id))))
+  if (!isAdmin && !isOwner) {
+    throw new AppError(403, 'FORBIDDEN', 'You can only edit your own profile')
+  }
+  return { isAdmin, isOwner }
+}
+
+// Din mein ek dafa: aaj ho chuka (save, button ya cron se) to 429 aur kab dobara ho sakta hai
+function tooSoon(next: Date) {
+  const hours = Math.max(1, Math.ceil((next.getTime() - Date.now()) / (60 * 60 * 1000)))
+  return new AppError(
+    429,
+    'REFRESH_TOO_SOON',
+    `Followers were refreshed recently. Try again in ${hours} hour${hours === 1 ? '' : 's'}`,
+    undefined,
+    { nextRefreshAt: next.toISOString() },
+  )
+}
+
+// POST /api/people/:id/refresh-followers -> maalik / manager / admin abhi followers dobara laye
+export async function refreshPersonFollowers(req: Request, res: Response) {
+  const id = String(req.params.id)
+  if (!isValidObjectId(id)) throw new AppError(404, 'NOT_FOUND', 'Profile not found')
+  const person = await Person.findById(id)
+  if (!person) throw new AppError(404, 'NOT_FOUND', 'Profile not found')
+  await editAccess(req, person)
+
+  const next = nextRefreshAt(person)
+  if (next) throw tooSoon(next)
+
+  const { limited, ...result } = await refreshFollowers(person)
+  // Isi waqt kisi aur request ne aaj ki baari le li
+  if (limited) {
+    const latest = await Person.findById(id).select('followersRefreshedAt').lean()
+    throw tooSoon(nextRefreshAt(latest ?? person) ?? new Date())
+  }
+  await person.populate(TAXONOMY_POPULATE)
+  sendSuccess(res, { person, ...result })
 }
 
 // DELETE /api/people/:id -> sirf admin, hamesha ke liye mita deta hai

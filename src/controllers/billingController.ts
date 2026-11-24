@@ -1,97 +1,59 @@
-import { Request, Response, NextFunction } from 'express'
-import { createPolar } from "@polar-sh/sdk/2026-10"
+import type { Request, Response } from 'express'
+import '../types/express'
+import {
+  billingSummary,
+  createCheckout,
+  createPortalSession,
+  handlePolarEvent,
+  listPlans,
+  syncFromPolar,
+  verifyPolarSignature,
+} from '../services/billingService'
 import { env } from '../config/env'
+import { sendError, sendSuccess } from '../utils/apiResponse'
 
-// Initialize Polar with the correct environment
-const polar = createPolar({
-  accessToken: process.env.POLAR_ACCESS_TOKEN || '',
-  environment: process.env.NODE_ENV === 'production' ? 'production' : 'sandbox',
-})
-
-const PLANS = [
-  {
-    role: 'business',
-    enabled: true,
-    freeLimits: { hiresPerMonth: 2, openCampaigns: 1, talents: 5, applicationsPerMonth: 10 },
-    name: 'Business Pro',
-    description: 'For companies hiring talent',
-    price: { type: 'recurring', amount: 25, currency: 'USD', interval: 'month' },
-    // 👇 PASTE YOUR BUSINESS PRO UUID HERE:
-    polarProductId: 'prod_...', 
-  },
-  {
-    role: 'representative',
-    enabled: true,
-    freeLimits: { hiresPerMonth: 2, openCampaigns: 1, talents: 5, applicationsPerMonth: 10 },
-    name: 'Manager Pro',
-    description: 'For managers and agencies',
-    price: { type: 'recurring', amount: 20, currency: 'USD', interval: 'month' },
-    // 👇 PASTE YOUR MANAGER PRO UUID HERE:
-    polarProductId: 'prod_...', 
-  },
-  {
-    role: 'talent',
-    enabled: true,
-    freeLimits: { hiresPerMonth: 2, openCampaigns: 1, talents: 5, applicationsPerMonth: 10 },
-    name: 'Talent Pro',
-    description: 'For creators and influencers',
-    price: { type: 'recurring', amount: 5, currency: 'USD', interval: 'month' },
-    // 👇 PASTE YOUR TALENT PRO UUID HERE:
-    polarProductId: 'prod_...', 
-  },
-]
-
-export async function getPlans(req: Request, res: Response, next: NextFunction) {
-  try {
-    res.json({ success: true, data: { plans: PLANS } })
-  } catch (error) {
-    next(error)
-  }
+// GET /api/billing/plans -> public: har account type ka Pro plan (naam, daam, free hadein)
+export async function getPlans(_req: Request, res: Response) {
+  sendSuccess(res, await listPlans())
 }
 
-export async function getMyBilling(req: Request, res: Response, next: NextFunction) {
-  try {
-    res.json({
-      success: true,
-      data: {
-        enabled: true,
-        sandbox: true,
-        plan: 'free',
-        subscription: null,
-        usage: [],
-      },
-    })
-  } catch (error) {
-    next(error)
-  }
+// GET /api/billing/me -> mera plan, subscription aur is mahine ka istemal
+// (?sync=1: checkout se wapas aaye hain, Polar se taaza haal le lo)
+export async function getMyBilling(req: Request, res: Response) {
+  if (req.query.sync) await syncFromPolar(req.user!.id)
+  sendSuccess(res, await billingSummary(req.user!))
 }
 
-export async function createCheckout(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { role } = req.body
-    const plan = PLANS.find((p) => p.role === role)
+// POST /api/billing/checkout -> Polar ka checkout page ka link
+export async function startCheckout(req: Request, res: Response) {
+  sendSuccess(res, await createCheckout(req.user!), 201)
+}
 
-    if (!plan) {
-      return res.status(404).json({ success: false, message: 'Plan not found' })
-    }
+// POST /api/billing/portal -> Polar ka customer portal (card badlo, cancel, invoices)
+export async function openPortal(req: Request, res: Response) {
+  sendSuccess(res, await createPortalSession(req.user!))
+}
 
-    // Validation check to make sure you didn't forget to paste the ID
-    if (plan.polarProductId === 'prod_...' || plan.polarProductId.includes('xxxxx')) {
-      return res.status(400).json({
-        success: false,
-        message: `You forgot to replace the placeholder polarProductId for the "${role}" plan in billingController.ts with your real Polar Sandbox Product ID.`,
-      })
-    }
-
-    const checkout = await polar.checkouts.create({
-      products: [plan.polarProductId],
-      // FIXED: Using snake_case success_url for the new Polar SDK
-      success_url: `${env.clientUrls[0]}/dashboard/billing?success=true`, 
-    })
-
-    res.json({ success: true, data: { url: checkout.url } })
-  } catch (error) {
-    console.error('Polar Checkout Error:', error)
-    next(error)
+// POST /api/billing/webhook -> Polar yahan events bhejta hai (raw body, sign check)
+export async function polarWebhook(req: Request, res: Response) {
+  if (!env.polarWebhookSecret) {
+    return sendError(res, 503, 'PAYMENTS_OFF', 'Webhook secret is not configured')
   }
+  const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : ''
+  const ok = verifyPolarSignature(raw, {
+    id: req.get('webhook-id'),
+    timestamp: req.get('webhook-timestamp'),
+    signature: req.get('webhook-signature'),
+  })
+  if (!ok) return sendError(res, 403, 'INVALID_SIGNATURE', 'Invalid webhook signature')
+
+  let event: { type?: string; data?: unknown }
+  try {
+    event = JSON.parse(raw)
+  } catch {
+    return sendError(res, 400, 'INVALID_JSON', 'Invalid JSON')
+  }
+  await handlePolarEvent(event)
+  // Polar ko 2xx chahiye, warna dobara bhejta hai
+  res.status(202).json({ received: true })
 }

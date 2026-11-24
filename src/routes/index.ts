@@ -15,8 +15,12 @@ import shortlistRoutes from './shortlistRoutes'
 import directoryRoutes from './directoryRoutes'
 import campaignRoutes from './campaignRoutes'
 import accountRoutes from './accountRoutes'
-import billingRoutes from './billingRoutes' // 👈 NEW: Import billing routes
+import agentRoutes from './agentRoutes'
+import cronRoutes from './cronRoutes'
+import inquiryRoutes from './inquiryRoutes'
+import billingRoutes from './billingRoutes'
 import { getUpload } from '../controllers/uploadController'
+import { adminSuggestionRouter, cronRouter as suggestionCronRouter } from './suggestionRoutes'
 
 // Saari API routes yahan ek jagah jorte hain
 const router = Router()
@@ -26,6 +30,7 @@ router.use('/people', peopleRoutes)
 router.use('/taxonomy', taxonomyRoutes)
 router.use('/claims', claimRoutes)
 router.use('/reports', reportRoutes)
+router.use('/inquiries', inquiryRoutes)
 router.use('/admin', adminRoutes)
 router.use('/notifications', notificationRoutes)
 // /me/manager pehle, warna /me wale talent routes us ko le lete
@@ -38,7 +43,14 @@ router.use('/shortlists', shortlistRoutes)
 router.use('/directory', directoryRoutes)
 router.use('/campaigns', campaignRoutes)
 router.use('/account', accountRoutes)
-router.use('/billing', billingRoutes) // 👈 NEW: Mount billing routes at /api/billing
+// Payments (Polar.sh)
+router.use('/billing', billingRoutes)
+// AI agents: /api/sitemap.xml aur /api/md/... (markdown)
+router.use(agentRoutes)
+// Vercel Cron (CRON_SECRET ke saath)
+router.use('/cron', cronRoutes)
+router.use('/cron', suggestionCronRouter)
+router.use('/admin/suggestions', adminSuggestionRouter)
 // Upload ki hui tasveerein (photos / logos)
 router.get('/uploads/:file', getUpload)
 

@@ -15,6 +15,7 @@ import shortlistRoutes from './shortlistRoutes'
 import directoryRoutes from './directoryRoutes'
 import campaignRoutes from './campaignRoutes'
 import accountRoutes from './accountRoutes'
+import billingRoutes from './billingRoutes' // 👈 NEW: Import billing routes
 import { getUpload } from '../controllers/uploadController'
 
 // Saari API routes yahan ek jagah jorte hain
@@ -37,6 +38,7 @@ router.use('/shortlists', shortlistRoutes)
 router.use('/directory', directoryRoutes)
 router.use('/campaigns', campaignRoutes)
 router.use('/account', accountRoutes)
+router.use('/billing', billingRoutes) // 👈 NEW: Mount billing routes at /api/billing
 // Upload ki hui tasveerein (photos / logos)
 router.get('/uploads/:file', getUpload)
 

@@ -8,8 +8,7 @@ import { handleFromUrl } from '../utils/socialHandle'
 import { tavilyFollowers } from './followers/tavily'
 import { youtubeChannel } from './followers/youtube'
 
-// ✅ Group Size 3 kar diya gaya hai (Tokens bachane ke liye)
-export const GROUP_SIZE = 3
+export const GROUP_SIZE = 3 // ✅ 3 profiles per group
 const PLATFORM_ORDER: FollowerPlatform[] = ['youtube', 'instagram', 'tiktok', 'x', 'facebook']
 const SOCIAL_DOMAINS = ['instagram.com', 'youtube.com', 'tiktok.com', 'x.com', 'twitter.com', 'facebook.com']
 
@@ -163,6 +162,13 @@ export async function generateIfDue(force = false): Promise<GenerationResult> {
       docs.map((doc: any) => ({ ...doc, batchId, generatedAt, date: todayKey(), status: 'pending' })),
     )
     
+    // ✅ SMART CLEANUP: Purana fizool data delete karo taake DB full na ho
+    // Hum sirf latest batch aur Pending records rakhenge
+    await Suggestion.deleteMany({
+      batchId: { $ne: batchId },
+      status: { $ne: 'pending' }, 
+    })
+
     await SuggestionSetting.updateOne(
       { key: 'global' },
       { $set: { lastGeneratedAt: generatedAt, lastError: null } },
@@ -206,7 +212,7 @@ async function discover(scope: 'national' | 'international', topic: string) {
     query,
     search_depth: 'advanced',
     include_answer: true,
-    max_results: 6, // ✅ Kam results taake tokens bachein
+    max_results: 6,
   })
   const parts = [
     data.answer ?? '',
@@ -225,7 +231,6 @@ interface Candidate {
   reason?: string
 }
 
-// ✅ Naya Strict Name Extraction Logic
 async function extractCandidates(
   scope: 'national' | 'international',
   evidence: string,
@@ -236,7 +241,6 @@ async function extractCandidates(
   const lines = evidence.split('\n')
   const seen = new Set<string>()
 
-  // In words ko naam ke tor par ignore karein (Fake headlines / Channels / Locations)
   const stopWords = new Set([
     'top', 'best', 'content', 'united', 'states', 'focus', 'creators', 'influencers', 
     'pakistani', 'international', 'social', 'media', 'youtube', 'instagram', 'tiktok',
@@ -251,19 +255,17 @@ async function extractCandidates(
     
     if (cleanLine.length < 5 || cleanLine.startsWith('#') || cleanLine.startsWith('http')) continue
 
-    // Regex: Kam az kam 2 lafz, pehla letter Capital, sirf alphabets
     const match = cleanLine.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/)
     if (match) {
       const name = match[1].trim()
       const parts = name.split(' ')
       
-      // Agar naam mein koi stop word aa raha hai to isko skip karein
       if (parts.some(part => stopWords.has(part.toLowerCase()))) continue
       
       const normName = norm(name)
       
       if (avoid.some(a => norm(a) === normName) || seen.has(normName)) continue
-      if (parts.length < 2) continue // Kam az kam 2 lafz (First + Last Name)
+      if (parts.length < 2) continue
 
       seen.add(normName)
       out.push({
@@ -308,7 +310,7 @@ async function findHandles(candidate: Candidate) {
         query: `${candidate.name} official account`,
         include_domains: SOCIAL_DOMAINS,
         search_depth: 'basic',
-        max_results: 6, // ✅ Kam results
+        max_results: 6,
       },
       15_000,
     )
@@ -388,7 +390,6 @@ async function verifyCandidate(candidate: Candidate, known: Set<string>): Promis
 
   const total = accounts.reduce((sum, account) => sum + account.followers, 0)
   
-  // ✅ Followers kam az kam 50k hone chahiye taake koi random banda na aaye
   if (accounts.length === 0 || total < 50000) return null
   
   return { candidate, accounts, photoUrl, total }
@@ -415,9 +416,8 @@ async function knownIdentities() {
 
 async function buildGroup(cycle: number) {
   const started = Date.now()
-  // ✅ Group size 3 hai, toh 2 national aur 1 international
-  const nationalNeed = 2
-  const intlNeed = 1
+  const nationalNeed = 2 // 2 Pakistani
+  const intlNeed = 1 // 1 International
   
   const known = await knownIdentities()
   

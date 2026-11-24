@@ -3,8 +3,6 @@ import { getMyBilling, getPlans, openPortal, startCheckout } from '../controller
 import { requireAuth } from '../middlewares/requireAuth'
 import { requireRole } from '../middlewares/requireRole'
 
-// Payments (Polar.sh): plans, checkout, subscription manage karna.
-// Webhook (/api/billing/webhook) app.ts mein hai, kyun ke us ko raw body chahiye
 const router = Router()
 
 router.get('/plans', getPlans)

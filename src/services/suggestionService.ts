@@ -8,7 +8,7 @@ import { handleFromUrl } from '../utils/socialHandle'
 import { tavilyFollowers } from './followers/tavily'
 import { youtubeChannel } from './followers/youtube'
 
-export const GROUP_SIZE = 3 // ✅ 3 profiles per group
+export const GROUP_SIZE = 3
 const PLATFORM_ORDER: FollowerPlatform[] = ['youtube', 'instagram', 'tiktok', 'x', 'facebook']
 const SOCIAL_DOMAINS = ['instagram.com', 'youtube.com', 'tiktok.com', 'x.com', 'twitter.com', 'facebook.com']
 
@@ -41,8 +41,6 @@ const PROFILE_URL: Record<FollowerPlatform, (handle: string) => string> = {
 
 export const identityOf = (platform: string, handle: string) => `${platform}:${handle.toLowerCase()}`
 
-// ---------- Settings ----------
-
 async function ensureSetting() {
   try {
     await SuggestionSetting.updateOne(
@@ -74,9 +72,7 @@ export function suggestionIntervalMs() {
 }
 
 export function missingKeys() {
-  return [
-    ...(env.tavilyApiKey ? [] : ['TAVILY_API_KEY']),
-  ]
+  return [...(env.tavilyApiKey ? [] : ['TAVILY_API_KEY'])]
 }
 
 const retryAfterMs = () => Math.min(suggestionIntervalMs(), 10 * 60 * 1000)
@@ -132,7 +128,7 @@ export type GenerationResult =
   | { status: 'not_due' | 'busy' | 'disabled' }
   | { status: 'failed'; error: string }
 
-export async function generateIfDue(force = false): Promise<GenerationResult> {
+export async function generateIfDue(force = false, userCountry = 'PK'): Promise<GenerationResult> {
   const setting = await ensureSetting()
   if (!force && !setting?.enabled) return { status: 'disabled' }
   
@@ -154,7 +150,7 @@ export async function generateIfDue(force = false): Promise<GenerationResult> {
   if (!lock) return { status: 'busy' }
 
   try {
-    const docs = await buildGroup(lock.cycle ?? 0)
+    const docs = await buildGroup(lock.cycle ?? 0, userCountry)
     const batchId = `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`
     const generatedAt = new Date()
     
@@ -162,8 +158,6 @@ export async function generateIfDue(force = false): Promise<GenerationResult> {
       docs.map((doc: any) => ({ ...doc, batchId, generatedAt, date: todayKey(), status: 'pending' })),
     )
     
-    // ✅ SMART CLEANUP: Purana fizool data delete karo taake DB full na ho
-    // Hum sirf latest batch aur Pending records rakhenge
     await Suggestion.deleteMany({
       batchId: { $ne: batchId },
       status: { $ne: 'pending' }, 
@@ -184,13 +178,7 @@ export async function generateIfDue(force = false): Promise<GenerationResult> {
   }
 }
 
-// ---------- 1. Discovery (Tavily) ----------
-
-interface TavilyResult {
-  url?: string
-  title?: string
-  content?: string
-}
+interface TavilyResult { url?: string; title?: string; content?: string }
 
 async function tavilySearch(body: Record<string, unknown>, timeoutMs = 20_000) {
   const res = await fetch('https://api.tavily.com/search', {
@@ -203,97 +191,42 @@ async function tavilySearch(body: Record<string, unknown>, timeoutMs = 20_000) {
   return (await res.json()) as { answer?: string; results?: TavilyResult[] }
 }
 
-async function discover(scope: 'national' | 'international', topic: string) {
-  const query =
-    scope === 'national'
-      ? `top Pakistani ${topic} influencers and content creators on YouTube, Instagram and TikTok`
-      : `top international ${topic} influencers and content creators worldwide on YouTube, Instagram and TikTok`
-  const data = await tavilySearch({
-    query,
-    search_depth: 'advanced',
-    include_answer: true,
-    max_results: 6,
-  })
-  const parts = [
-    data.answer ?? '',
-    ...(data.results ?? []).map((r) => `${r.title ?? ''}\n${(r.content ?? '').slice(0, 1500)}`),
-  ]
+async function discover(scope: 'national' | 'international', topic: string, userCountry: string) {
+  const countryName = { 'PK': 'Pakistani', 'AE': 'UAE', 'SA': 'Saudi Arabian', 'US': 'American', 'GB': 'British', 'IN': 'Indian' }[userCountry] || userCountry; 
+  const query = scope === 'national' ? `top ${countryName} ${topic} influencers and content creators` : `top international ${topic} influencers and content creators worldwide`
+  const data = await tavilySearch({ query, search_depth: 'advanced', include_answer: true, max_results: 6 })
+  const parts = [data.answer ?? '', ...(data.results ?? []).map((r) => `${r.title ?? ''}\n${(r.content ?? '').slice(0, 1500)}`)]
   return parts.join('\n\n').slice(0, 12_000)
 }
 
-// ---------- 2. Extract Candidates ----------
+interface Candidate { name: string; scope: 'national' | 'international'; country?: string; headline?: string; reason?: string }
 
-interface Candidate {
-  name: string
-  scope: 'national' | 'international'
-  country?: string
-  headline?: string
-  reason?: string
-}
-
-async function extractCandidates(
-  scope: 'national' | 'international',
-  evidence: string,
-  want: number,
-  avoid: string[],
-): Promise<Candidate[]> {
+async function extractCandidates(scope: 'national' | 'international', evidence: string, want: number, avoid: string[]): Promise<Candidate[]> {
   const out: Candidate[] = []
   const lines = evidence.split('\n')
   const seen = new Set<string>()
-
-  const stopWords = new Set([
-    'top', 'best', 'content', 'united', 'states', 'focus', 'creators', 'influencers', 
-    'pakistani', 'international', 'social', 'media', 'youtube', 'instagram', 'tiktok',
-    'tech', 'pakistan', 'news', 'digital', 'marketing', 'agency', 'brand', 'city',
-    'cantt', 'museum', 'crafts', 'history', 'group', 'daily', 'life', 'vlog', 'channel',
-    'official', 'account', 'followers', 'verified'
-  ])
+  const stopWords = new Set(['top', 'best', 'content', 'united', 'states', 'focus', 'creators', 'influencers', 'pakistani', 'international', 'social', 'media', 'youtube', 'instagram', 'tiktok', 'tech', 'pakistan', 'news', 'digital', 'marketing', 'agency', 'brand', 'city', 'cantt', 'museum', 'crafts', 'history', 'group', 'daily', 'life', 'vlog', 'channel', 'official', 'account', 'followers', 'verified'])
 
   for (const line of lines) {
     if (out.length >= want) break
     const cleanLine = line.trim()
-    
     if (cleanLine.length < 5 || cleanLine.startsWith('#') || cleanLine.startsWith('http')) continue
-
     const match = cleanLine.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/)
     if (match) {
       const name = match[1].trim()
       const parts = name.split(' ')
-      
       if (parts.some(part => stopWords.has(part.toLowerCase()))) continue
-      
       const normName = norm(name)
-      
-      if (avoid.some(a => norm(a) === normName) || seen.has(normName)) continue
-      if (parts.length < 2) continue
-
+      if (avoid.some(a => norm(a) === normName) || seen.has(normName) || parts.length < 2) continue
       seen.add(normName)
-      out.push({
-        name,
-        scope,
-        country: scope === 'national' ? 'PK' : undefined,
-        headline: cleanLine.slice(0, 150),
-        reason: 'Verified via Tavily web search',
-      })
+      out.push({ name, scope, country: scope === 'national' ? 'PK' : undefined, headline: cleanLine.slice(0, 150), reason: 'Verified via Tavily web search' })
     }
   }
   return out
 }
 
-// ---------- 3 + 4. Verify Social Accounts ----------
-
-interface VerifiedAccount extends SuggestionSocial {
-  platform: FollowerPlatform
-  handle: string
-  followers: number
-}
-
-interface Verified {
-  candidate: Candidate
-  accounts: VerifiedAccount[]
-  photoUrl?: string
-  total: number
-}
+interface VerifiedAccount extends SuggestionSocial { platform: FollowerPlatform; handle: string; followers: number }
+interface Verified { candidate: Candidate; accounts: VerifiedAccount[]; photoUrl?: string; total: number }
 
 async function findHandles(candidate: Candidate) {
   const tokens = nameTokens(candidate.name)
@@ -303,17 +236,8 @@ async function findHandles(candidate: Candidate) {
     byHandle.set(handle, (byHandle.get(handle) ?? 0) + score)
     scored.set(platform, byHandle)
   }
-
   try {
-    const data = await tavilySearch(
-      {
-        query: `${candidate.name} official account`,
-        include_domains: SOCIAL_DOMAINS,
-        search_depth: 'basic',
-        max_results: 6,
-      },
-      15_000,
-    )
+    const data = await tavilySearch({ query: `${candidate.name} official account`, include_domains: SOCIAL_DOMAINS, search_depth: 'basic', max_results: 6 }, 15_000)
     for (const result of data.results ?? []) {
       if (!result.url) continue
       const title = `${result.title ?? ''} ${(result.content ?? '').slice(0, 300)}`.toLowerCase()
@@ -327,16 +251,8 @@ async function findHandles(candidate: Candidate) {
         if (score > 0) add(platform, handle, score)
       }
     }
-  } catch (error) {
-    console.warn('[suggestions] social search failed for', candidate.name, (error as Error).message)
-  }
-
-  return PLATFORM_ORDER.flatMap((platform) =>
-    [...(scored.get(platform) ?? new Map()).entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 2)
-      .map(([handle]) => ({ platform, handle })),
-  )
+  } catch (error) {}
+  return PLATFORM_ORDER.flatMap((platform) => [...(scored.get(platform) ?? new Map()).entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([handle]) => ({ platform, handle })))
 }
 
 async function verifyCandidate(candidate: Candidate, known: Set<string>): Promise<Verified | null> {
@@ -345,7 +261,6 @@ async function verifyCandidate(candidate: Candidate, known: Set<string>): Promis
   let photoUrl: string | undefined
   let lookups = 0
   const tokens = nameTokens(candidate.name)
-
   for (const platform of PLATFORM_ORDER) {
     if (accounts.some((account) => account.platform === platform)) continue
     for (const option of options.filter((o) => o.platform === platform)) {
@@ -360,38 +275,19 @@ async function verifyCandidate(candidate: Candidate, known: Set<string>): Promis
           if (!channel || channel.subscribers === null) continue
           const title = channel.title.toLowerCase()
           if (tokens.length && !tokens.some((token) => title.includes(token))) continue
-          accounts.push({
-            platform,
-            handle: option.handle,
-            url: PROFILE_URL.youtube(option.handle),
-            followers: channel.subscribers,
-            followersSourceUrl: `https://www.youtube.com/channel/${channel.id}`,
-            followersUpdatedAt: now,
-          })
+          accounts.push({ platform, handle: option.handle, url: PROFILE_URL.youtube(option.handle), followers: channel.subscribers, followersSourceUrl: `https://www.youtube.com/channel/${channel.id}`, followersUpdatedAt: now })
           photoUrl = photoUrl ?? channel.thumbnail
           break
-        } catch {
-          continue
-        }
+        } catch { continue }
       }
       const result = await tavilyFollowers(platform as Exclude<FollowerPlatform, 'youtube'>, option.handle)
       if (result.status !== 'ok') continue
-      accounts.push({
-        platform,
-        handle: option.handle,
-        url: PROFILE_URL[platform](option.handle),
-        followers: result.count,
-        followersSourceUrl: result.sourceUrl,
-        followersUpdatedAt: now,
-      })
+      accounts.push({ platform, handle: option.handle, url: PROFILE_URL[platform](option.handle), followers: result.count, followersSourceUrl: result.sourceUrl, followersUpdatedAt: now })
       break
     }
   }
-
   const total = accounts.reduce((sum, account) => sum + account.followers, 0)
-  
   if (accounts.length === 0 || total < 50000) return null
-  
   return { candidate, accounts, photoUrl, total }
 }
 
@@ -402,10 +298,7 @@ async function knownIdentities() {
   ])
   const names = new Set<string>()
   const handles = new Set<string>()
-  for (const item of [
-    ...people.map((p) => ({ name: p.name, socials: p.socialAccounts })),
-    ...past,
-  ]) {
+  for (const item of [...people.map((p) => ({ name: p.name, socials: p.socialAccounts })), ...past]) {
     names.add(norm(item.name))
     for (const social of item.socials ?? []) {
       if (social.handle) handles.add(identityOf(social.platform, social.handle))
@@ -414,46 +307,29 @@ async function knownIdentities() {
   return { names, handles, avoid: [...people, ...past].map((p) => p.name) }
 }
 
-async function buildGroup(cycle: number) {
+async function buildGroup(cycle: number, userCountry: string) {
   const started = Date.now()
-  const nationalNeed = 2 // 2 Pakistani
-  const intlNeed = 1 // 1 International
-  
+  const nationalNeed = 2
+  const intlNeed = 1
   const known = await knownIdentities()
-  
   const verified: Record<'national' | 'international', Verified[]> = { national: [], international: [] }
   const tried = new Set<string>()
-  const enough = () =>
-    verified.national.length >= nationalNeed && verified.international.length >= intlNeed
+  const enough = () => verified.national.length >= nationalNeed && verified.international.length >= intlNeed
 
   for (let round = 0; round < MAX_ROUNDS && !enough(); round += 1) {
     if (Date.now() - started > GENERATION_BUDGET_MS) break
     const topic = TOPICS[(cycle * 2 + round) % TOPICS.length]
-    
     for (const scope of ['national', 'international'] as const) {
       const need = scope === 'national' ? nationalNeed : intlNeed
       if (verified[scope].length >= need) continue
-      
       let evidence: string
-      try {
-        evidence = await discover(scope, topic)
-      } catch (error) {
-        if (round === MAX_ROUNDS - 1) throw error
-        continue
-      }
-      
-      const candidates = (await extractCandidates(scope, evidence, 5, known.avoid))
-        .filter((candidate) => {
-          const key = norm(candidate.name)
-          return !known.names.has(key) && !tried.has(key)
-        })
-
+      try { evidence = await discover(scope, topic, userCountry) } catch (error) { if (round === MAX_ROUNDS - 1) throw error; continue }
+      const candidates = (await extractCandidates(scope, evidence, 5, known.avoid)).filter((candidate) => !known.names.has(norm(candidate.name)) && !tried.has(norm(candidate.name)))
       for (let i = 0; i < candidates.length && verified[scope].length < need; i += 3) {
         if (Date.now() - started > GENERATION_BUDGET_MS) break
         const batch = candidates.slice(i, i + 3)
         batch.forEach((candidate) => tried.add(norm(candidate.name)))
         const results = await Promise.all(batch.map((c) => verifyCandidate(c, known.handles)))
-        
         for (const result of results) {
           if (!result || verified[scope].length >= need) continue
           verified[scope].push(result)
@@ -463,21 +339,15 @@ async function buildGroup(cycle: number) {
       }
     }
   }
-
   const group = [...verified.national.slice(0, nationalNeed), ...verified.international.slice(0, intlNeed)]
-  if (group.length < GROUP_SIZE) {
-    throw new Error(
-      `Only ${group.length} of ${GROUP_SIZE} influencers could be verified. ` +
-        'Will try again with new topics.',
-    )
-  }
+  if (group.length < GROUP_SIZE) throw new Error(`Only ${group.length} of ${GROUP_SIZE} could be verified.`)
 
   return group.map(({ candidate, accounts, photoUrl, total }) => {
     const top = [...accounts].sort((a, b) => b.followers - a.followers)[0]
     return {
       name: candidate.name.trim(),
       scope: candidate.scope,
-      country: candidate.scope === 'national' ? 'PK' : (candidate.country || 'US').toUpperCase(),
+      country: candidate.scope === 'national' ? userCountry : (candidate.country || 'US').toUpperCase(),
       headline: candidate.headline?.trim() || `Verified content creator`,
       reason: candidate.reason?.trim() || `Verified on ${accounts.map((a) => a.platform).join(', ')}`,
       photoUrl,

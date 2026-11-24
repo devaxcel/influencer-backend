@@ -39,17 +39,11 @@ export interface ISuggestion extends Document {
 const SuggestionSchema = new Schema<ISuggestion>(
   {
     date: { type: String, required: true, index: true },
-    
-   
-    batchId: { type: String }, 
-    
+    batchId: { type: String },
     generatedAt: { type: Date },
     groupId: { type: String, required: false, index: true },
     groupTitle: { type: String, required: true, trim: true, default: 'Influencer suggestion group' },
-    
-   
-    identityKey: { type: String }, 
-    
+    identityKey: { type: String },
     name: { type: String, required: true, trim: true },
     scope: { type: String, enum: ['national', 'international'], required: true },
     country: { type: String, required: true, trim: true },
@@ -78,11 +72,9 @@ const SuggestionSchema = new Schema<ISuggestion>(
   { timestamps: true },
 )
 
-
+// ✅ Unique indexes taake duplicate save na ho
 SuggestionSchema.index({ batchId: 1 }, { unique: true, sparse: true })
 SuggestionSchema.index({ identityKey: 1 }, { unique: true, sparse: true })
-
-
 SuggestionSchema.index({ date: 1, identityKey: 1 })
 
 export default model<ISuggestion>('Suggestion', SuggestionSchema)

@@ -72,7 +72,7 @@ type Row = {
 
 const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value : undefined)
 
-async function findRows(role: Kind, query: Parameters<typeof directoryPipeline>[2]) {
+export async function findRows(role: Kind, query: Parameters<typeof directoryPipeline>[2]) {
   const collection = role === 'business' ? BusinessProfile.collection.name : ManagerProfile.collection.name
   const [result] = await User.aggregate<{ items: Row[]; total: { count: number }[] }>(
     directoryPipeline(role, collection, query),

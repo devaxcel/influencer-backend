@@ -84,6 +84,9 @@ export interface SeoPage {
   ogType?: 'website' | 'profile' | 'article'
   image?: string
   imageAlt?: string
+  // Share image ka size (Facebook / LinkedIn ko pehle hi pata chal jaye) aur card ki qism
+  imageWidth?: number
+  imageHeight?: number
   noindex?: boolean
   jsonLd?: Record<string, unknown>
   // Bina-JS wale crawlers ke liye page ka text (React load hote hi hat jata hai)
@@ -103,16 +106,26 @@ export function injectSeo(shell: string, page: SeoPage) {
 
   const tags = [
     `<link rel="canonical" href="${escapeHtml(page.canonicalUrl)}" />`,
-    meta('name', 'robots', page.noindex ? 'noindex, nofollow' : 'index, follow, max-image-preview:large'),
+    // noindex ke saath follow: page index na ho, magar uske links crawl hote rahen
+    meta('name', 'robots', page.noindex ? 'noindex, follow' : 'index, follow, max-image-preview:large'),
     meta('property', 'og:type', page.ogType ?? 'website'),
     meta('property', 'og:site_name', page.siteName),
     meta('property', 'og:title', page.title),
     meta('property', 'og:description', page.description),
     meta('property', 'og:url', page.canonicalUrl),
     ...(page.image
-      ? [meta('property', 'og:image', page.image), meta('property', 'og:image:alt', page.imageAlt ?? page.title)]
+      ? [
+          meta('property', 'og:image', page.image),
+          ...(page.imageWidth && page.imageHeight
+            ? [
+                meta('property', 'og:image:width', String(page.imageWidth)),
+                meta('property', 'og:image:height', String(page.imageHeight)),
+              ]
+            : []),
+          meta('property', 'og:image:alt', page.imageAlt ?? page.title),
+        ]
       : []),
-    meta('name', 'twitter:card', page.image ? 'summary' : 'summary'),
+    meta('name', 'twitter:card', page.image && page.imageWidth ? 'summary_large_image' : 'summary'),
     meta('name', 'twitter:title', page.title),
     meta('name', 'twitter:description', page.description),
     ...(page.image ? [meta('name', 'twitter:image', page.image)] : []),

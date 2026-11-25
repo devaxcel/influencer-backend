@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { personSeoPage } from '../controllers/seoController'
 import {
   campaignMarkdown,
   campaignsMarkdown,
@@ -12,6 +13,8 @@ const router = Router()
 
 router.get('/sitemap.xml', sitemap)
 router.get('/md/people/:slug', personMarkdown)
+// Profile page ka asal HTML (SEO / Open Graph). Frontend /people/:slug yahan rewrite hota hai
+router.get('/seo/people/:slug', personSeoPage)
 router.get('/md/talent', talentMarkdown)
 router.get('/md/campaigns', campaignsMarkdown)
 router.get('/md/campaigns/:id', campaignMarkdown)

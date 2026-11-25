@@ -72,6 +72,8 @@ export const env = {
   followersRefreshLimitHours: Math.max(0, Number(process.env.FOLLOWERS_REFRESH_LIMIT_HOURS) || 0),
   // Vercel Cron yahi secret "Authorization: Bearer ..." mein bhejta hai
   cronSecret: (process.env.CRON_SECRET || '').trim(),
+  // Profile page ke SEO meta ke liye frontend ki index.html yahan se uthate hain. Khali ho to SITE_URL/index.html
+  seoShellUrl: (process.env.SEO_SHELL_URL || '').trim(),
   // Payments (Polar.sh). Token + kam az kam ek product ho to woh plan chalu, warna sab free.
   // polar.sh -> Settings -> Developers -> New token. Sandbox mein test: sandbox.polar.sh
   polarAccessToken: (process.env.POLAR_ACCESS_TOKEN || '').trim(),

@@ -31,7 +31,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   other: 'Other',
 }
 
-const PLATFORM_LABEL: Record<string, string> = {
+export const PLATFORM_LABEL: Record<string, string> = {
   instagram: 'Instagram',
   youtube: 'YouTube',
   tiktok: 'TikTok',

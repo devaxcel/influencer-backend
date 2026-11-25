@@ -7,17 +7,15 @@ export interface ISuggestionSetting extends Document {
   lastGeneratedAt?: Date
   generationStatus: 'idle' | 'running'
   generationStartedAt?: Date
-  // Aakhri koshish kab hui aur kya ghalat hua (admin panel pe dikhta hai)
   lastAttemptAt?: Date
   lastError?: string | null
-  // Har generation pe barhta hai: agli dafa naye topics
   cycle: number
 }
 
 const schema = new Schema<ISuggestionSetting>(
   {
     key: { type: String, enum: ['global'], unique: true, default: 'global' },
-    enabled: { type: Boolean, default: true },
+    enabled: { type: Boolean, default: true }, // ✅ On/Off State
     generationDate: String,
     lastGeneratedAt: Date,
     generationStatus: { type: String, enum: ['idle', 'running'], default: 'idle' },

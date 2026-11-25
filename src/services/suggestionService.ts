@@ -160,7 +160,7 @@ export async function generateIfDue(force = false, userCountry = 'PK'): Promise<
     
     await Suggestion.deleteMany({
       batchId: { $ne: batchId },
-      status: { $ne: 'pending' }, 
+     
     })
 
     await SuggestionSetting.updateOne(

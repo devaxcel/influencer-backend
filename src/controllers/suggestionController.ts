@@ -14,26 +14,37 @@ import { SOCIAL_PLATFORMS, type SocialPlatform } from '../constants/people'
 import type { Model } from 'mongoose'
 import type { ITaxonomyItem } from '../models/taxonomy'
 
-const GROUPS_SHOWN = 12
+// ✅ Sirf 3 groups show honge
+const GROUPS_SHOWN = 3
 
 async function listPayload() {
+  // Hum maximum 15 items fetch kar rahe hain (3 groups * 5 items)
   const [items, status] = await Promise.all([
-    Suggestion.find({ status: { $ne: 'dismissed' } }).sort({ generatedAt: -1, createdAt: -1 }).limit(GROUPS_SHOWN * 5 + 20).lean(),
+    Suggestion.find({ status: { $ne: 'dismissed' } })
+      .sort({ generatedAt: -1, createdAt: -1 })
+      .limit(GROUPS_SHOWN * 5 + 10) // Extra buffer
+      .lean(),
     generationStatus(),
   ])
+  
   const groups: { batchId: string; generatedAt: Date; suggestions: any[] }[] = []
+  
   for (const item of items) {
     const batchId = item.batchId ?? `day-${item.date}`
     let group = groups.find((g) => g.batchId === batchId)
     if (!group) {
+      // ✅ Agar 3 groups se zyada ho jayen, to purane groups ko chhor dein
       if (groups.length >= GROUPS_SHOWN) continue
       group = { batchId, generatedAt: item.generatedAt ?? item.createdAt, suggestions: [] }
       groups.push(group)
     }
     group.suggestions.push(item)
   }
+  
   for (const group of groups) {
-    group.suggestions.sort((a, b) => a.scope === b.scope ? (b.followerCount ?? 0) - (a.followerCount ?? 0) : a.scope === 'national' ? -1 : 1)
+    group.suggestions.sort((a, b) =>
+      a.scope === b.scope ? (b.followerCount ?? 0) - (a.followerCount ?? 0) : a.scope === 'national' ? -1 : 1,
+    )
   }
   return { ...status, groups, suggestions: groups.flatMap((group) => group.suggestions) }
 }
@@ -42,14 +53,11 @@ export async function listSuggestions(_req: Request, res: Response) {
   return sendSuccess(res, await listPayload())
 }
 
-// ✅ NAYA: Single Suggestion Detail
 export async function getSuggestionDetail(req: Request, res: Response) {
   const { id } = req.params
   if (!isValidObjectId(id)) throw new AppError(404, 'NOT_FOUND', 'Suggestion not found')
-  
   const suggestion = await Suggestion.findById(id).lean()
   if (!suggestion) throw new AppError(404, 'NOT_FOUND', 'Suggestion not found')
-
   return sendSuccess(res, suggestion)
 }
 
@@ -103,7 +111,10 @@ async function approveOne(suggestion: ISuggestion) {
     sourceRecords: (sources.length ? sources : [undefined]).map((url) => ({ sourceType: 'public_web', url, note: 'AI suggested', retrievedAt: new Date() })), visibility: 'visible',
   })
   await refreshNewAccounts(person)
+  
+  // ✅ Add hone ke baad suggestion delete kar dein
   await Suggestion.findByIdAndDelete(suggestion._id)
+  
   return person
 }
 

@@ -4,6 +4,7 @@ import { Person } from '../models/Person'
 import { personRatings } from './agreementController'
 import { PLATFORM_LABEL, priceText } from './agentController'
 import { OG_HEIGHT, OG_WIDTH } from './seoImageController'
+import { alternatesFor, localPath, parseLang, type Lang } from '../services/seoLang'
 import {
   absoluteUrl,
   buildProfileDescription,
@@ -45,8 +46,12 @@ export async function getShell(): Promise<string | null> {
 type Named = { name: string }
 const names = (list: unknown) => ((list ?? []) as Named[]).map((item) => item.name).filter(Boolean)
 
-export function buildPersonSeoPage(person: InstanceType<typeof Person>, rating?: { average: number; count: number }): SeoPage {
-  const url = `${env.siteUrl}/people/${person.slug}`
+export function buildPersonSeoPage(
+  person: InstanceType<typeof Person>,
+  rating?: { average: number; count: number },
+  lang: Lang = 'en',
+): SeoPage {
+  const url = `${env.siteUrl}${localPath(lang, `/people/${person.slug}`)}`
   const professions = names(person.professions)
   const topics = names(person.topics)
   const accounts = person.socialAccounts ?? []
@@ -59,7 +64,7 @@ export function buildPersonSeoPage(person: InstanceType<typeof Person>, rating?:
     : DEFAULT_OG_IMAGE
   const withFollowers = accounts.filter((account) => (account.followers ?? 0) > 0)
 
-  const title = buildProfileTitle(person.name, professions[0], env.platformName)
+  const title = buildProfileTitle(person.name, professions[0], env.platformName, lang)
   const description = buildProfileDescription({
     name: person.name,
     headline: person.headline,
@@ -67,6 +72,7 @@ export function buildPersonSeoPage(person: InstanceType<typeof Person>, rating?:
     location: [person.city, countryName(person.country)].filter(Boolean).join(', ') || undefined,
     totalFollowers: person.totalFollowers,
     platformCount: withFollowers.length || undefined,
+    lang,
   })
 
   const personId = `${url}#person`
@@ -105,11 +111,20 @@ export function buildPersonSeoPage(person: InstanceType<typeof Person>, rating?:
       '@id': url,
       url,
       name: title,
+      inLanguage: lang,
       dateModified: person.updatedAt,
       mainEntity: { '@id': personId },
       isPartOf: { '@id': `${env.siteUrl}/#website` },
     },
     personNode,
+    {
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: env.platformName, item: `${env.siteUrl}${localPath(lang, '/')}` },
+        { '@type': 'ListItem', position: 2, name: 'Talent', item: `${env.siteUrl}${localPath(lang, '/search')}` },
+        { '@type': 'ListItem', position: 3, name: person.name, item: url },
+      ],
+    },
   ]
   if (rating && rating.count > 0) {
     personNode.aggregateRating = {
@@ -127,6 +142,7 @@ export function buildPersonSeoPage(person: InstanceType<typeof Person>, rating?:
     professions.length && `<li>Profession: ${e(professions.join(', '))}</li>`,
     location && `<li>Location: ${e(location)}</li>`,
     person.verified && '<li>Verified profile</li>',
+    person.updatedAt && `<li>Last updated: ${e(new Date(person.updatedAt).toISOString().slice(0, 10))}</li>`,
     person.totalFollowers > 0 && `<li>Total followers: ${e(compactNumber(person.totalFollowers))}</li>`,
     rating && rating.count > 0 && `<li>Rating: ${rating.average}/5 from ${rating.count} completed job${rating.count === 1 ? '' : 's'}</li>`,
   ].filter(Boolean)
@@ -160,6 +176,8 @@ export function buildPersonSeoPage(person: InstanceType<typeof Person>, rating?:
     canonicalUrl: url,
     siteName: env.platformName,
     ogType: 'profile',
+    lang,
+    alternates: alternatesFor(`/people/${person.slug}`, env.siteUrl),
     image,
     imageWidth: hasPhoto ? OG_WIDTH : DEFAULT_OG_WIDTH,
     imageHeight: hasPhoto ? OG_HEIGHT : DEFAULT_OG_HEIGHT,
@@ -200,6 +218,7 @@ export async function personSeoPage(req: Request, res: Response) {
   }
 
   const slug = String(req.params.slug ?? '').toLowerCase()
+  const lang = parseLang(req.query.lang)
   try {
     const person = /^[a-z0-9-]{1,120}$/.test(slug)
       ? await Person.findOne({ slug, visibility: 'visible' }).populate([
@@ -209,7 +228,7 @@ export async function personSeoPage(req: Request, res: Response) {
       : null
     if (person) {
       const rating = (await personRatings([person._id])).get(String(person._id))
-      sendSeoHtml(res, injectSeo(shell, buildPersonSeoPage(person, rating)))
+      sendSeoHtml(res, injectSeo(shell, buildPersonSeoPage(person, rating, lang)))
       return
     }
     sendSeoHtml(
@@ -217,8 +236,9 @@ export async function personSeoPage(req: Request, res: Response) {
       injectSeo(shell, {
         title: `Profile not found | ${env.platformName}`,
         description: 'This profile does not exist or is not public.',
-        canonicalUrl: `${env.siteUrl}/people/${slug}`,
+        canonicalUrl: `${env.siteUrl}${localPath(lang, `/people/${slug}`)}`,
         siteName: env.platformName,
+        lang,
         noindex: true,
       }),
       404,

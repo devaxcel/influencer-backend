@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import { personSeoPage } from '../controllers/seoController'
 import { personShareImage } from '../controllers/seoImageController'
-import { campaignSeo, pageSeo } from '../controllers/seoPageController'
+import { campaignSeo, hubSeo, pageSeo } from '../controllers/seoPageController'
+import { getTalentHub, listTalentHubs } from '../controllers/hubController'
 import {
   campaignMarkdown,
   campaignsMarkdown,
@@ -21,6 +22,12 @@ router.get('/seo/people/:slug', personSeoPage)
 router.get('/seo/og/people/:slug.jpg', personShareImage)
 router.get('/seo/page/:name', pageSeo)
 router.get('/seo/campaigns/:id', campaignSeo)
+router.get('/seo/hub/:segment', hubSeo)
+router.get('/seo/hub/:segment/:country', hubSeo)
+// Hub pages ka JSON (React /talent/... page)
+router.get('/hubs/talent', listTalentHubs)
+router.get('/hubs/talent/:segment', getTalentHub)
+router.get('/hubs/talent/:segment/:country', getTalentHub)
 router.get('/md/talent', talentMarkdown)
 router.get('/md/campaigns', campaignsMarkdown)
 router.get('/md/campaigns/:id', campaignMarkdown)

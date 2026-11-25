@@ -3,6 +3,11 @@
 // frontend ki index.html mein title, description, canonical, Open Graph (photo), JSON-LD aur
 // bina-JS wala text daal kar bhejte hain. Browser mein React usay hata kar apna page dikhata hai.
 
+import { LANG_DIR, LANG_LOCALE, t, type Alternate, type Lang } from './seoLang'
+
+// Listing / hub pages mein is se kam entries hon to index nahi hote (thin content)
+export const MIN_INDEXABLE_ITEMS = 5
+
 export const escapeHtml = (text: string) =>
   text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 
@@ -33,9 +38,10 @@ export const TITLE_MAX = 60
 export const DESCRIPTION_MAX = 155
 
 // "Shahid Afridi: Cricketer | Reach & Hire | Influnexa" (60 harf tak; lamba ho to chhota roop)
-export function buildProfileTitle(name: string, profession?: string, brand = 'Influnexa') {
+export function buildProfileTitle(name: string, profession?: string, brand = 'Influnexa', lang: Lang = 'en') {
+  const reach = t('profileReach', lang)
   const options = [
-    profession ? `${name}: ${profession} | Reach & Hire | ${brand}` : `${name} | Reach & Hire | ${brand}`,
+    profession ? `${name}: ${profession} | ${reach} | ${brand}` : `${name} | ${reach} | ${brand}`,
     profession ? `${name} | ${profession} | ${brand}` : '',
     `${name} | ${brand}`,
   ].filter(Boolean)
@@ -49,10 +55,12 @@ export interface DescriptionInput {
   location?: string
   totalFollowers?: number
   platformCount?: number
+  lang?: Lang
 }
 
 // 155 harf tak. Pehle sab, na ho paye to followers hatao, phir intro chhota karo
 export function buildProfileDescription(input: DescriptionInput) {
+  const lang = input.lang ?? 'en'
   const intro = input.headline
     ? `${input.name}: ${squash(input.headline).replace(/[.\s]+$/, '')}.`
     : input.profession
@@ -60,9 +68,11 @@ export function buildProfileDescription(input: DescriptionInput) {
       : `${input.name} on Influnexa.`
   const followers =
     input.totalFollowers && input.totalFollowers > 0
-      ? ` ${compactNumber(input.totalFollowers)} followers${input.platformCount ? ` across ${input.platformCount} platform${input.platformCount === 1 ? '' : 's'}` : ''}.`
+      ? lang === 'en'
+        ? ` ${compactNumber(input.totalFollowers)} followers${input.platformCount ? ` across ${input.platformCount} platform${input.platformCount === 1 ? '' : 's'}` : ''}.`
+        : `${t('followersLine', lang, { n: compactNumber(input.totalFollowers) })}.`
       : ''
-  const tail = ' See reach, services and prices, then send a hire request.'
+  const tail = t('profileTail', lang)
   for (const text of [intro + followers + tail, intro + tail, intro + followers, intro]) {
     if (text.length <= DESCRIPTION_MAX) return text
   }
@@ -88,6 +98,9 @@ export interface SeoPage {
   imageWidth?: number
   imageHeight?: number
   noindex?: boolean
+  // Zaban, hreflang aur og:locale (na ho to English / koi alternate nahi)
+  lang?: Lang
+  alternates?: Alternate[]
   jsonLd?: Record<string, unknown>
   // Bina-JS wale crawlers ke liye page ka text (React load hote hi hat jata hai)
   bodyHtml?: string
@@ -129,6 +142,10 @@ export function injectSeo(shell: string, page: SeoPage) {
     meta('name', 'twitter:title', page.title),
     meta('name', 'twitter:description', page.description),
     ...(page.image ? [meta('name', 'twitter:image', page.image)] : []),
+    meta('property', 'og:locale', LANG_LOCALE[page.lang ?? 'en']),
+    ...(page.alternates ?? []).map(
+      (alt) => `<link rel="alternate" hreflang="${escapeHtml(alt.lang)}" href="${escapeHtml(alt.href)}" />`,
+    ),
     ...(page.markdownUrl ? [`<link rel="alternate" type="text/markdown" href="${escapeHtml(page.markdownUrl)}" />`] : []),
     ...(page.jsonLd ? [jsonScript('ld-page', page.jsonLd)] : []),
   ].join('\n    ')
@@ -140,6 +157,9 @@ export function injectSeo(shell: string, page: SeoPage) {
     .replace(/<meta\s+(?:property|name)="(?:og:|twitter:)[^"]*"[\s\S]*?\/?>\s*/gi, '')
     .replace(/<meta\s+name="robots"[\s\S]*?\/?>\s*/gi, '')
     .replace(/<link\s+rel="canonical"[\s\S]*?\/?>\s*/gi, '')
+    .replace(/<link\s+rel="alternate"\s+hreflang="[^"]*"[\s\S]*?\/?>\s*/gi, '')
+    // Zaban aur disha: <html lang="ur" dir="rtl">
+    .replace(/<html(?=[\s>])[^>]*>/i, () => `<html lang="${page.lang ?? 'en'}" dir="${LANG_DIR[page.lang ?? 'en']}">`)
     .replace(/<script type="application\/ld\+json" id="(?:ld-faq-home|ld-page)">[\s\S]*?<\/script>\s*/gi, '')
   // Function replacer: naam ya text mein "$&" jaisa kuch ho to bhi sahi rahe
   html = html.replace(/<\/head>/i, () => `    ${tags}\n  </head>`)

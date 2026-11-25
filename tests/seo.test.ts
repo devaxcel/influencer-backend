@@ -71,7 +71,7 @@ describe('injectSeo', () => {
   })
 
   it('can mark a page noindex', () => {
-    expect(injectSeo(shell, { ...page, noindex: true })).toContain('content="noindex, nofollow"')
+    expect(injectSeo(shell, { ...page, noindex: true })).toContain('content="noindex, follow"')
   })
 
   it('replaceRootContent keeps nested divs balanced', () => {

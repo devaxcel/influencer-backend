@@ -248,18 +248,9 @@ export async function campaignMarkdown(req: Request, res: Response) {
 const xml = (text: string) =>
   text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-const STATIC_PAGES = [
-  '/',
-  '/search',
-  '/browse',
-  '/campaigns',
-  '/businesses',
-  '/managers',
-  '/about',
-  '/privacy',
-  '/terms',
-  '/pricing',
-]
+const STATIC_PAGES = ['/', '/search', '/browse', '/about', '/privacy', '/terms', '/pricing']
+// Listing pages sirf tab sitemap mein jab un mein kam az kam itni entries hon (warna wo noindex hain)
+const MIN_LISTING_ITEMS = 5
 
 // GET /api/sitemap.xml -> public pages, profiles, khuli campaigns, verified businesses / managers
 export async function sitemap(_req: Request, res: Response) {
@@ -273,6 +264,9 @@ export async function sitemap(_req: Request, res: Response) {
     `<url><loc>${xml(site(path))}</loc>${lastmod ? `<lastmod>${lastmod.toISOString().slice(0, 10)}</lastmod>` : ''}</url>`
   const urls = [
     ...STATIC_PAGES.map((p) => entry(p)),
+    ...(campaigns.length >= MIN_LISTING_ITEMS ? [entry('/campaigns')] : []),
+    ...(businesses.length >= MIN_LISTING_ITEMS ? [entry('/businesses')] : []),
+    ...(managers.length >= MIN_LISTING_ITEMS ? [entry('/managers')] : []),
     ...people.map((p) => entry(`/people/${p.slug}`, p.updatedAt)),
     ...campaigns.map((c) => entry(`/campaigns/${String(c._id)}`, c.updatedAt)),
     ...businesses.map((b) => entry(`/businesses/${String(b.owner)}`, b.updatedAt)),

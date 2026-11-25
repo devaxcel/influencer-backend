@@ -1,5 +1,7 @@
 import { Router } from 'express'
 import { personSeoPage } from '../controllers/seoController'
+import { personShareImage } from '../controllers/seoImageController'
+import { campaignSeo, pageSeo } from '../controllers/seoPageController'
 import {
   campaignMarkdown,
   campaignsMarkdown,
@@ -15,6 +17,10 @@ router.get('/sitemap.xml', sitemap)
 router.get('/md/people/:slug', personMarkdown)
 // Profile page ka asal HTML (SEO / Open Graph). Frontend /people/:slug yahan rewrite hota hai
 router.get('/seo/people/:slug', personSeoPage)
+// Share image (1200x630) aur baqi public pages ka SEO HTML
+router.get('/seo/og/people/:slug.jpg', personShareImage)
+router.get('/seo/page/:name', pageSeo)
+router.get('/seo/campaigns/:id', campaignSeo)
 router.get('/md/talent', talentMarkdown)
 router.get('/md/campaigns', campaignsMarkdown)
 router.get('/md/campaigns/:id', campaignMarkdown)

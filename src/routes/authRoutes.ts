@@ -14,7 +14,7 @@ import {
   resetPassword,
   verifyResetCode,
 } from '../controllers/passwordResetController'
-import { googleConfig, googleLogin, googleRegister } from '../controllers/googleAuthController'
+import { captchaConfig, googleConfig, googleLogin, googleRegister } from '../controllers/googleAuthController'
 import { validate } from '../middlewares/validate'
 import { requireAuth } from '../middlewares/requireAuth'
 import { loginLimiter, otpLimiter, passwordResetLimiter, registerLimiter } from '../middlewares/rateLimit'
@@ -26,6 +26,7 @@ router.post('/register', registerLimiter, validate(registerSchema), register)
 router.post('/login', loginLimiter, validate(loginSchema), login)
 // Google se login / signup
 router.get('/google/config', googleConfig)
+router.get('/captcha/config', captchaConfig)
 router.post('/google/login', loginLimiter, googleLogin)
 router.post('/google/register', registerLimiter, googleRegister)
 router.post('/refresh', refresh)

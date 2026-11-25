@@ -9,6 +9,7 @@ import { sendSuccess } from '../utils/apiResponse'
 import { parseOrThrow } from '../utils/validation'
 import { registerSchema } from '../validators/authValidator'
 import { issueTokens } from './authController'
+import { verifyRecaptcha } from '../services/recaptchaService'
 
 const credentialSchema = z.object({
   credential: z.string('Google sign-in failed').min(20, 'Google sign-in failed').max(5000),
@@ -16,7 +17,17 @@ const credentialSchema = z.object({
 
 // GET /api/auth/google/config -> frontend ko button dikhana hai ya nahi, aur kis client ID se
 export function googleConfig(_req: Request, res: Response) {
-  sendSuccess(res, { enabled: Boolean(env.googleClientId), clientId: env.googleClientId || null })
+  sendSuccess(res, {
+    enabled: Boolean(env.googleClientId),
+    clientId: env.googleClientId || null,
+  })
+}
+
+export function captchaConfig(_req: Request, res: Response) {
+  sendSuccess(res, {
+    enabled: Boolean(env.recaptchaSiteKey && env.recaptchaSecretKey),
+    siteKey: env.recaptchaSiteKey || null,
+  })
 }
 
 // Is Google account wala user: pehle googleId se, warna usi email se (pehli dafa jod do)
@@ -48,7 +59,11 @@ function signIn(res: Response, user: UserDocument, status = 200, existing = true
 
 // POST /api/auth/google/login -> sirf maujooda account. Na mile to pehle sign up
 export async function googleLogin(req: Request, res: Response) {
-  const { credential } = parseOrThrow(credentialSchema, req.body ?? {})
+  const { credential, captchaToken } = parseOrThrow(
+    credentialSchema.extend({ captchaToken: z.string().optional() }),
+    req.body ?? {},
+  )
+  await verifyRecaptcha(req, captchaToken)
   const identity = await verifyGoogleCredential(credential)
   const user = await findGoogleUser(identity)
   if (!user) {
@@ -65,9 +80,10 @@ export async function googleLogin(req: Request, res: Response) {
 // magar email aur naam Google se, password nahi. Account pehle se ho to bas login
 export async function googleRegister(req: Request, res: Response) {
   const { credential, ...form } = parseOrThrow(
-    credentialSchema.passthrough(),
+    credentialSchema.extend({ captchaToken: z.string().optional() }).passthrough(),
     req.body ?? {},
-  ) as { credential: string } & Record<string, unknown>
+  ) as { credential: string; captchaToken?: string } & Record<string, unknown>
+  await verifyRecaptcha(req, form.captchaToken)
   const identity = await verifyGoogleCredential(credential)
 
   const existing = await findGoogleUser(identity)

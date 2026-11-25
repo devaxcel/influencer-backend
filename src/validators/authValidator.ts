@@ -4,6 +4,7 @@ import { COMPANY_SIZES, ORGANIZATION_TYPES } from '../constants/business'
 
 const email = z.email('Enter a valid email').trim().toLowerCase()
 const password = z.string().min(8, 'Password must be at least 8 characters').max(100)
+const captchaToken = z.string().trim().min(1).optional()
 const optionalText = (max: number) =>
   z.string().trim().max(max, `Use at most ${max} characters`).optional()
 const country = z
@@ -31,6 +32,7 @@ const talentSignup = z.object({
   name: personName,
   email,
   password,
+  captchaToken,
 })
 
 const managerSignup = z.object({
@@ -38,6 +40,7 @@ const managerSignup = z.object({
   name: personName,
   email,
   password,
+  captchaToken,
   agencyName: optionalText(120),
   country,
   websiteUrl: optionalUrl,
@@ -45,6 +48,7 @@ const managerSignup = z.object({
 
 const businessSignup = z.object({
   role: z.literal('business'),
+  captchaToken,
   organizationType: z.enum(ORGANIZATION_TYPES, 'Choose the type of organization'),
   companyName: z
     .string('Name must be at least 2 characters')
@@ -97,6 +101,7 @@ export const registerSchema = z
 export const loginSchema = z.object({
   email: z.email('Enter a valid email').trim().toLowerCase(),
   password: z.string().min(1, 'Password is required'),
+  captchaToken,
 })
 
 export const changePasswordSchema = z

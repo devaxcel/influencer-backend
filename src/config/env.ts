@@ -40,6 +40,9 @@ export const env = {
   // "Sign in with Google": Google Cloud Console ka OAuth Web client ID (public hai, secret nahi)
   // (VITE_GOOGLE_CLIENT_ID bhi chalega: aksar wahi naam dono projects mein daal diya jata hai)
   googleClientId: (process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '').trim(),
+  // Google reCAPTCHA v2 checkbox. No keys = CAPTCHA is disabled (useful for isolated test environments).
+  recaptchaSiteKey: (process.env.RECAPTCHA_SITE_KEY || process.env.VITE_RECAPTCHA_SITE_KEY || '').trim(),
+  recaptchaSecretKey: (process.env.RECAPTCHA_SECRET_KEY || '').trim(),
   // Followers khud lane ke liye. Khali ho to woh platform skip (purana number rehta hai)
   youtubeApiKey: (process.env.YOUTUBE_API_KEY || '').trim(),
   // Optional: regex se number na nikle to Groq ka sasta model text se nikale

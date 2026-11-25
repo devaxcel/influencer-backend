@@ -30,6 +30,7 @@ import { CampaignApplication } from '../models/CampaignApplication'
 import { writeAuditLog } from '../services/auditService'
 import { releaseOwnedProfiles } from '../services/profileOwnershipService'
 import { parseOrThrow } from '../utils/validation'
+import { verifyRecaptcha } from '../services/recaptchaService'
 import {
   changePasswordSchema,
   deleteAccountSchema,
@@ -49,7 +50,8 @@ export function issueTokens(res: Response, user: UserDocument) {
 
 // POST /api/auth/register
 export async function register(req: Request, res: Response) {
-  const { name, email, password, role, company, manager } = req.body as RegisterInput
+  const { name, email, password, role, company, manager, captchaToken } = req.body as RegisterInput & { captchaToken?: string }
+  await verifyRecaptcha(req, captchaToken)
 
   const exists = await User.exists({ email })
   if (exists) {
@@ -65,7 +67,8 @@ export async function register(req: Request, res: Response) {
 
 // POST /api/auth/login
 export async function login(req: Request, res: Response) {
-  const { email, password } = req.body as LoginInput
+  const { email, password, captchaToken } = req.body as LoginInput & { captchaToken?: string }
+  await verifyRecaptcha(req, captchaToken)
 
   const user = await User.findOne({ email }).select('+password +tokenVersion')
   if (!user || !(await user.comparePassword(password))) {

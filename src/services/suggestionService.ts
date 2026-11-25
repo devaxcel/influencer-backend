@@ -41,6 +41,8 @@ const PROFILE_URL: Record<FollowerPlatform, (handle: string) => string> = {
 
 export const identityOf = (platform: string, handle: string) => `${platform}:${handle.toLowerCase()}`
 
+// ---------- Settings ----------
+
 async function ensureSetting() {
   try {
     await SuggestionSetting.updateOne(
@@ -72,7 +74,12 @@ export function suggestionIntervalMs() {
 }
 
 export function missingKeys() {
-  return [...(env.tavilyApiKey ? [] : ['TAVILY_API_KEY'])]
+  // ✅ Tavily ya Anthropic mein se koi ek hona chahiye
+  const hasTavily = Boolean(env.tavilyApiKey)
+  const hasAnthropic = Boolean(env.anthropicApiKey)
+  return [
+    ...(hasTavily || hasAnthropic ? [] : ['TAVILY_API_KEY or ANTHROPIC_API_KEY']),
+  ]
 }
 
 const retryAfterMs = () => Math.min(suggestionIntervalMs(), 10 * 60 * 1000)
@@ -158,9 +165,10 @@ export async function generateIfDue(force = false, userCountry = 'PK'): Promise<
       docs.map((doc: any) => ({ ...doc, batchId, generatedAt, date: todayKey(), status: 'pending' })),
     )
     
+    // ✅ SMART CLEANUP: Purana fizool data delete karo taake DB full na ho
     await Suggestion.deleteMany({
       batchId: { $ne: batchId },
-     
+      status: { $ne: 'pending' }, 
     })
 
     await SuggestionSetting.updateOne(
@@ -178,7 +186,13 @@ export async function generateIfDue(force = false, userCountry = 'PK'): Promise<
   }
 }
 
-interface TavilyResult { url?: string; title?: string; content?: string }
+// ---------- 1. Discovery (Tavily) ----------
+
+interface TavilyResult {
+  url?: string
+  title?: string
+  content?: string
+}
 
 async function tavilySearch(body: Record<string, unknown>, timeoutMs = 20_000) {
   const res = await fetch('https://api.tavily.com/search', {
@@ -192,41 +206,132 @@ async function tavilySearch(body: Record<string, unknown>, timeoutMs = 20_000) {
 }
 
 async function discover(scope: 'national' | 'international', topic: string, userCountry: string) {
-  const countryName = { 'PK': 'Pakistani', 'AE': 'UAE', 'SA': 'Saudi Arabian', 'US': 'American', 'GB': 'British', 'IN': 'Indian' }[userCountry] || userCountry; 
+  const countryName = { 'PK': 'Pakistani', 'AE': 'UAE', 'SA': 'Saudi Arabian', 'US': 'American', 'GB': 'British', 'IN': 'Indian' }[userCountry] || userCountry
   const query = scope === 'national' ? `top ${countryName} ${topic} influencers and content creators` : `top international ${topic} influencers and content creators worldwide`
+  
+  if (!env.tavilyApiKey) return ''
+
   const data = await tavilySearch({ query, search_depth: 'advanced', include_answer: true, max_results: 6 })
   const parts = [data.answer ?? '', ...(data.results ?? []).map((r) => `${r.title ?? ''}\n${(r.content ?? '').slice(0, 1500)}`)]
   return parts.join('\n\n').slice(0, 12_000)
 }
 
-interface Candidate { name: string; scope: 'national' | 'international'; country?: string; headline?: string; reason?: string }
+// ---------- 2. Extract Candidates (Anthropic OR Tavily Regex) ----------
 
-async function extractCandidates(scope: 'national' | 'international', evidence: string, want: number, avoid: string[]): Promise<Candidate[]> {
-  const out: Candidate[] = []
-  const lines = evidence.split('\n')
-  const seen = new Set<string>()
-  const stopWords = new Set(['top', 'best', 'content', 'united', 'states', 'focus', 'creators', 'influencers', 'pakistani', 'international', 'social', 'media', 'youtube', 'instagram', 'tiktok', 'tech', 'pakistan', 'news', 'digital', 'marketing', 'agency', 'brand', 'city', 'cantt', 'museum', 'crafts', 'history', 'group', 'daily', 'life', 'vlog', 'channel', 'official', 'account', 'followers', 'verified'])
-
-  for (const line of lines) {
-    if (out.length >= want) break
-    const cleanLine = line.trim()
-    if (cleanLine.length < 5 || cleanLine.startsWith('#') || cleanLine.startsWith('http')) continue
-    const match = cleanLine.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/)
-    if (match) {
-      const name = match[1].trim()
-      const parts = name.split(' ')
-      if (parts.some(part => stopWords.has(part.toLowerCase()))) continue
-      const normName = norm(name)
-      if (avoid.some(a => norm(a) === normName) || seen.has(normName) || parts.length < 2) continue
-      seen.add(normName)
-      out.push({ name, scope, country: scope === 'national' ? 'PK' : undefined, headline: cleanLine.slice(0, 150), reason: 'Verified via Tavily web search' })
-    }
-  }
-  return out
+interface Candidate {
+  name: string
+  scope: 'national' | 'international'
+  country?: string
+  headline?: string
+  reason?: string
 }
 
-interface VerifiedAccount extends SuggestionSocial { platform: FollowerPlatform; handle: string; followers: number }
-interface Verified { candidate: Candidate; accounts: VerifiedAccount[]; photoUrl?: string; total: number }
+async function extractWithAnthropic(evidence: string, want: number): Promise<Candidate[]> {
+  if (!env.anthropicApiKey) return []
+  
+  const prompt = `From the following web search text, list up to ${want} individual social media influencers or content creators.
+  Rules:
+  - Only people whose full name is written in the text. Never add anyone from memory.
+  - Individuals only (no brands, TV channels, agencies or lists).
+  - Do not include follower counts.
+  - Return JSON only: {"candidates":[{"name": "Full Name", "headline": "Short bio based on text"}]}
+  
+  Search text:
+  ${evidence}`
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': env.anthropicApiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-3-haiku-20240307',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    })
+    
+    if (!res.ok) throw new Error(`Anthropic API ${res.status}`)
+    const data = await res.json()
+    const text = data.content?.[0]?.text || ''
+    
+    const jsonStart = text.indexOf('{')
+    const jsonEnd = text.lastIndexOf('}')
+    if (jsonStart === -1 || jsonEnd === -1) return []
+    
+    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1))
+    return (parsed.candidates || []).map((c: any) => ({
+      name: c.name,
+      scope: 'international',
+      headline: c.headline,
+    }))
+  } catch (error) {
+    console.warn('[suggestions] Anthropic extraction failed', (error as Error).message)
+    return []
+  }
+}
+
+async function extractCandidates(
+  scope: 'national' | 'international',
+  evidence: string,
+  want: number,
+  avoid: string[],
+): Promise<Candidate[]> {
+  if (!evidence) return []
+
+  let candidates: Candidate[] = []
+
+  // ✅ 1. Agar Anthropic available hai, to usko try karein
+  if (env.anthropicApiKey) {
+    candidates = await extractWithAnthropic(evidence, want)
+    candidates = candidates.map(c => ({ ...c, scope }))
+  }
+
+  // ✅ 2. Agar Anthropic nahi hai ya fail ho gaya, to fallback to Regex
+  if (candidates.length === 0) {
+    const out: Candidate[] = []
+    const lines = evidence.split('\n')
+    const seen = new Set<string>()
+    const stopWords = new Set(['top', 'best', 'content', 'united', 'states', 'focus', 'creators', 'influencers', 'pakistani', 'international', 'social', 'media', 'youtube', 'instagram', 'tiktok', 'tech', 'pakistan', 'news', 'digital', 'marketing', 'agency', 'brand', 'city', 'cantt', 'museum', 'crafts', 'history', 'group', 'daily', 'life', 'vlog', 'channel', 'official', 'account', 'followers', 'verified'])
+
+    for (const line of lines) {
+      if (out.length >= want) break
+      const cleanLine = line.trim()
+      if (cleanLine.length < 5 || cleanLine.startsWith('#') || cleanLine.startsWith('http')) continue
+      const match = cleanLine.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/)
+      if (match) {
+        const name = match[1].trim()
+        const parts = name.split(' ')
+        if (parts.some(part => stopWords.has(part.toLowerCase()))) continue
+        const normName = norm(name)
+        if (avoid.some(a => norm(a) === normName) || seen.has(normName) || parts.length < 2) continue
+        seen.add(normName)
+        out.push({ name, scope, country: scope === 'national' ? 'PK' : undefined, headline: cleanLine.slice(0, 150), reason: 'Verified via web search' })
+      }
+    }
+    candidates = out
+  }
+
+  return candidates.filter(c => !avoid.some(a => norm(a) === norm(c.name)))
+}
+
+// ---------- 3 + 4. Verify Social Accounts ----------
+
+interface VerifiedAccount extends SuggestionSocial {
+  platform: FollowerPlatform
+  handle: string
+  followers: number
+}
+
+interface Verified {
+  candidate: Candidate
+  accounts: VerifiedAccount[]
+  photoUrl?: string
+  total: number
+}
 
 async function findHandles(candidate: Candidate) {
   const tokens = nameTokens(candidate.name)
@@ -236,8 +341,17 @@ async function findHandles(candidate: Candidate) {
     byHandle.set(handle, (byHandle.get(handle) ?? 0) + score)
     scored.set(platform, byHandle)
   }
+
   try {
-    const data = await tavilySearch({ query: `${candidate.name} official account`, include_domains: SOCIAL_DOMAINS, search_depth: 'basic', max_results: 6 }, 15_000)
+    const data = await tavilySearch(
+      {
+        query: `${candidate.name} official account`,
+        include_domains: SOCIAL_DOMAINS,
+        search_depth: 'basic',
+        max_results: 6,
+      },
+      15_000,
+    )
     for (const result of data.results ?? []) {
       if (!result.url) continue
       const title = `${result.title ?? ''} ${(result.content ?? '').slice(0, 300)}`.toLowerCase()
@@ -251,8 +365,16 @@ async function findHandles(candidate: Candidate) {
         if (score > 0) add(platform, handle, score)
       }
     }
-  } catch (error) {}
-  return PLATFORM_ORDER.flatMap((platform) => [...(scored.get(platform) ?? new Map()).entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([handle]) => ({ platform, handle })))
+  } catch (error) {
+    console.warn('[suggestions] social search failed for', candidate.name, (error as Error).message)
+  }
+
+  return PLATFORM_ORDER.flatMap((platform) =>
+    [...(scored.get(platform) ?? new Map()).entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2)
+      .map(([handle]) => ({ platform, handle })),
+  )
 }
 
 async function verifyCandidate(candidate: Candidate, known: Set<string>): Promise<Verified | null> {
@@ -261,6 +383,7 @@ async function verifyCandidate(candidate: Candidate, known: Set<string>): Promis
   let photoUrl: string | undefined
   let lookups = 0
   const tokens = nameTokens(candidate.name)
+
   for (const platform of PLATFORM_ORDER) {
     if (accounts.some((account) => account.platform === platform)) continue
     for (const option of options.filter((o) => o.platform === platform)) {
@@ -275,19 +398,39 @@ async function verifyCandidate(candidate: Candidate, known: Set<string>): Promis
           if (!channel || channel.subscribers === null) continue
           const title = channel.title.toLowerCase()
           if (tokens.length && !tokens.some((token) => title.includes(token))) continue
-          accounts.push({ platform, handle: option.handle, url: PROFILE_URL.youtube(option.handle), followers: channel.subscribers, followersSourceUrl: `https://www.youtube.com/channel/${channel.id}`, followersUpdatedAt: now })
+          accounts.push({
+            platform,
+            handle: option.handle,
+            url: PROFILE_URL.youtube(option.handle),
+            followers: channel.subscribers,
+            followersSourceUrl: `https://www.youtube.com/channel/${channel.id}`,
+            followersUpdatedAt: now,
+          })
           photoUrl = photoUrl ?? channel.thumbnail
           break
-        } catch { continue }
+        } catch {
+          continue
+        }
       }
       const result = await tavilyFollowers(platform as Exclude<FollowerPlatform, 'youtube'>, option.handle)
       if (result.status !== 'ok') continue
-      accounts.push({ platform, handle: option.handle, url: PROFILE_URL[platform](option.handle), followers: result.count, followersSourceUrl: result.sourceUrl, followersUpdatedAt: now })
+      accounts.push({
+        platform,
+        handle: option.handle,
+        url: PROFILE_URL[platform](option.handle),
+        followers: result.count,
+        followersSourceUrl: result.sourceUrl,
+        followersUpdatedAt: now,
+      })
       break
     }
   }
+
   const total = accounts.reduce((sum, account) => sum + account.followers, 0)
+  
+  // ✅ Kam az kam 50,000 followers wala hi select hoga
   if (accounts.length === 0 || total < 50000) return null
+  
   return { candidate, accounts, photoUrl, total }
 }
 
@@ -323,7 +466,12 @@ async function buildGroup(cycle: number, userCountry: string) {
       const need = scope === 'national' ? nationalNeed : intlNeed
       if (verified[scope].length >= need) continue
       let evidence: string
-      try { evidence = await discover(scope, topic, userCountry) } catch (error) { if (round === MAX_ROUNDS - 1) throw error; continue }
+      try {
+        evidence = await discover(scope, topic, userCountry)
+      } catch (error) {
+        if (round === MAX_ROUNDS - 1) throw error
+        continue
+      }
       const candidates = (await extractCandidates(scope, evidence, 5, known.avoid)).filter((candidate) => !known.names.has(norm(candidate.name)) && !tried.has(norm(candidate.name)))
       for (let i = 0; i < candidates.length && verified[scope].length < need; i += 3) {
         if (Date.now() - started > GENERATION_BUDGET_MS) break

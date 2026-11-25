@@ -31,6 +31,8 @@ export const env = {
   siteUrl: (process.env.SITE_URL || 'https://influnexa.com').trim().replace(/\/+$/, ''),
   jwtAccessSecret: process.env.JWT_ACCESS_SECRET || '',
   jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || '',
+  tavilyApiKey: (process.env.TAVILY_API_KEY || '').trim(),
+  anthropicApiKey: (process.env.ANTHROPIC_API_KEY || '').trim(), // ✅ Add kiya
   // Email (password reset / agreement codes) Resend API se: resend.com -> API Keys
   resendApiKey: (process.env.RESEND_API_KEY || '').trim(),
   // Bhejne wala, Resend mein verified domain ka: "Influnexa <info@influnexa.com>"
@@ -39,7 +41,6 @@ export const env = {
   // (VITE_GOOGLE_CLIENT_ID bhi chalega: aksar wahi naam dono projects mein daal diya jata hai)
   googleClientId: (process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '').trim(),
   // Followers khud lane ke liye. Khali ho to woh platform skip (purana number rehta hai)
-  tavilyApiKey: (process.env.TAVILY_API_KEY || '').trim(),
   youtubeApiKey: (process.env.YOUTUBE_API_KEY || '').trim(),
   // Optional: regex se number na nikle to Groq ka sasta model text se nikale
   groqApiKey: (process.env.GROQ_API_KEY || '').trim(),

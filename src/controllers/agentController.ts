@@ -8,6 +8,8 @@ import { Person, type IService } from '../models/Person'
 import { personRatings } from './agreementController'
 import { openFilter } from './campaignController'
 import { AppError } from '../utils/AppError'
+import { listHubs } from '../services/hubService'
+import { LANGS, alternatesFor, localPath } from '../services/seoLang'
 
 // AI agents aur search engines ke liye: sitemap.xml aur pages ka saaf markdown roop
 // (HTML se kahin kam tokens). Frontend /sitemap.xml, *.md aur "Accept: text/markdown" yahan bhejta hai
@@ -252,21 +254,31 @@ const STATIC_PAGES = ['/', '/search', '/browse', '/about', '/privacy', '/terms',
 // Listing pages sirf tab sitemap mein jab un mein kam az kam itni entries hon (warna wo noindex hain)
 const MIN_LISTING_ITEMS = 5
 
-// GET /api/sitemap.xml -> public pages, profiles, khuli campaigns, verified businesses / managers
+// GET /api/sitemap.xml -> public pages, profiles, hubs, khuli campaigns, verified businesses / managers.
+// Har page ke teen zabani URL (/, /ur, /ar) aur har ek mein hreflang
 export async function sitemap(_req: Request, res: Response) {
-  const [people, campaigns, businesses, managers] = await Promise.all([
+  const [people, campaigns, businesses, managers, hubs] = await Promise.all([
     Person.find({ visibility: 'visible' }).select('slug updatedAt').lean(),
     Campaign.find(openFilter()).select('_id updatedAt').lean(),
     BusinessProfile.find({ status: 'approved' }).select('owner updatedAt').lean(),
     ManagerProfile.find({ status: 'approved' }).select('owner updatedAt').lean(),
+    listHubs(),
   ])
-  const entry = (path: string, lastmod?: Date) =>
-    `<url><loc>${xml(site(path))}</loc>${lastmod ? `<lastmod>${lastmod.toISOString().slice(0, 10)}</lastmod>` : ''}</url>`
+  const entry = (path: string, lastmod?: Date) => {
+    const alternates = alternatesFor(path, env.siteUrl)
+      .map((alt) => `<xhtml:link rel="alternate" hreflang="${xml(alt.lang)}" href="${xml(alt.href)}"/>`)
+      .join('')
+    return LANGS.map(
+      (lang) =>
+        `<url><loc>${xml(`${env.siteUrl}${localPath(lang, path)}`)}</loc>${lastmod ? `<lastmod>${lastmod.toISOString().slice(0, 10)}</lastmod>` : ''}${alternates}</url>`,
+    ).join('\n')
+  }
   const urls = [
     ...STATIC_PAGES.map((p) => entry(p)),
     ...(campaigns.length >= MIN_LISTING_ITEMS ? [entry('/campaigns')] : []),
     ...(businesses.length >= MIN_LISTING_ITEMS ? [entry('/businesses')] : []),
     ...(managers.length >= MIN_LISTING_ITEMS ? [entry('/managers')] : []),
+    ...(hubs.length > 0 ? [entry('/talent'), ...hubs.map((hub) => entry(hub.path))] : []),
     ...people.map((p) => entry(`/people/${p.slug}`, p.updatedAt)),
     ...campaigns.map((c) => entry(`/campaigns/${String(c._id)}`, c.updatedAt)),
     ...businesses.map((b) => entry(`/businesses/${String(b.owner)}`, b.updatedAt)),
@@ -276,6 +288,6 @@ export async function sitemap(_req: Request, res: Response) {
   res.set('Cache-Control', 'public, max-age=0, must-revalidate')
   res.set('CDN-Cache-Control', 'max-age=3600, stale-while-revalidate=86400')
   res.send(
-    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`,
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${urls.join('\n')}\n</urlset>\n`,
   )
 }

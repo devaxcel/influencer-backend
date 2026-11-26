@@ -8,6 +8,10 @@ import { LANG_DIR, LANG_LOCALE, t, type Alternate, type Lang } from './seoLang'
 // Listing / hub pages mein is se kam entries hon to index nahi hote (thin content)
 export const MIN_INDEXABLE_ITEMS = 5
 
+// Profile share image (Open Graph) ka size
+export const OG_WIDTH = 1200
+export const OG_HEIGHT = 630
+
 export const escapeHtml = (text: string) =>
   text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 

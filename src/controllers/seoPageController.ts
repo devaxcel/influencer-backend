@@ -325,13 +325,20 @@ function render(shell: string, built: Built, req: Request, lang: Lang) {
 
 async function serve(req: Request, res: Response, builder: Builder) {
   const lang = parseLang(req.query.lang)
+  // Database ka kaam aur shell ka load ek saath shuru (dono ka intezar ek dafa)
+  const builtPromise = builder(req, lang).then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error }),
+  )
   const shell = await getShell()
   if (!shell) {
     res.status(503).set('Retry-After', '60').type('text/plain').send('Page temporarily unavailable. Please try again.')
     return
   }
   try {
-    const built = await builder(req, lang)
+    const result = await builtPromise
+    if (!result.ok) throw result.error
+    const built = result.value
     sendSeoHtml(res, render(shell, built, req, lang), built.notFound ? 404 : 200)
   } catch (error) {
     console.error('[seo] page failed:', error instanceof Error ? error.message : error)

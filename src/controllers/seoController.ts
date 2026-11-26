@@ -3,9 +3,10 @@ import { env } from '../config/env'
 import { Person } from '../models/Person'
 import { personRatings } from './agreementController'
 import { PLATFORM_LABEL, priceText } from './agentController'
-import { OG_HEIGHT, OG_WIDTH } from './seoImageController'
 import { alternatesFor, localPath, parseLang, type Lang } from '../services/seoLang'
 import {
+  OG_HEIGHT,
+  OG_WIDTH,
   absoluteUrl,
   buildProfileDescription,
   buildProfileTitle,
@@ -203,14 +204,32 @@ export function sendSeoHtml(res: Response, html: string, status = 200) {
   res.status(status)
   res.set('Content-Type', 'text/html; charset=utf-8')
   res.set('Cache-Control', 'public, max-age=0, must-revalidate')
-  // CDN 2 minute rakhe (chhota, taake naye deploy ke baad purane JS file ke naam na atkein)
-  res.set('CDN-Cache-Control', status === 200 ? 'max-age=120' : 'max-age=30')
+  // CDN 5 minute taaza rakhe, phir 10 minute tak purana foran de aur peeche se naya bana le (stale-while-revalidate):
+  // crawler ko kabhi cold start ka intezar nahi. Lamba nahi rakha, taake naye deploy ke baad purane JS file ke naam na atkein
+  res.set('CDN-Cache-Control', status === 200 ? 'max-age=300, stale-while-revalidate=600' : 'max-age=30')
   res.send(html)
+}
+
+async function loadPerson(slug: string) {
+  if (!/^[a-z0-9-]{1,120}$/.test(slug)) return null
+  const person = await Person.findOne({ slug, visibility: 'visible' }).populate([
+    { path: 'professions', select: 'name' },
+    { path: 'topics', select: 'name' },
+  ])
+  if (!person) return null
+  const rating = (await personRatings([person._id])).get(String(person._id))
+  return { person, rating }
 }
 
 // GET /api/seo/people/:slug -> frontend ke /people/:slug pe Vercel rewrite yahan bhejta hai.
 // React wali index.html hi milti hai, bas us mein is profile ka SEO / Open Graph / photo daal kar
 export async function personSeoPage(req: Request, res: Response) {
+  const slugParam = String(req.params.slug ?? '').toLowerCase()
+  // Shell (frontend ki index.html) aur database ka kaam ek saath shuru, dono ka intezar ek dafa
+  const personPromise = loadPerson(slugParam).then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error }),
+  )
   const shell = await getShell()
   if (!shell) {
     res.status(503).set('Retry-After', '60').type('text/plain').send('Page temporarily unavailable. Please try again.')
@@ -220,15 +239,11 @@ export async function personSeoPage(req: Request, res: Response) {
   const slug = String(req.params.slug ?? '').toLowerCase()
   const lang = parseLang(req.query.lang)
   try {
-    const person = /^[a-z0-9-]{1,120}$/.test(slug)
-      ? await Person.findOne({ slug, visibility: 'visible' }).populate([
-          { path: 'professions', select: 'name' },
-          { path: 'topics', select: 'name' },
-        ])
-      : null
-    if (person) {
-      const rating = (await personRatings([person._id])).get(String(person._id))
-      sendSeoHtml(res, injectSeo(shell, buildPersonSeoPage(person, rating, lang)))
+    const loaded = await personPromise
+    if (!loaded.ok) throw loaded.error
+    const found = loaded.value
+    if (found) {
+      sendSeoHtml(res, injectSeo(shell, buildPersonSeoPage(found.person, found.rating, lang)))
       return
     }
     sendSeoHtml(

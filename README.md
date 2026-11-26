@@ -459,17 +459,29 @@ After paying, Polar sends the user back to `/dashboard/billing`. That page asks 
 
 ## AI influencer suggestions (admin)
 
-Every `SUGGESTIONS_INTERVAL` (for example `3s` for testing or `1d` for production), the backend makes a **group of 5 real influencers**: 3 from Pakistan and 2 from other countries by default (`SUGGESTIONS_NATIONAL_COUNT`). The admin sees each group under *Admin → AI suggestions*, ticks the people they want and adds them with one click.
+Every `SUGGESTIONS_INTERVAL` (for example `3s` for testing or `1d` for production), the backend makes a **group of 3 real people, one from each of 3 categories**. The admin sees each group under *Admin → AI suggestions*, ticks the people they want and adds them with one click. Nothing is published until the admin approves it.
+
+There are 5 categories, and 3 are used per group. The set rotates by 3 every successful group, so each category comes up 3 times in every 5 groups:
+
+| Category | Who | Profession set on approval |
+|---|---|---|
+| `leader` | Politicians and country or international leaders | Public Official |
+| `tech` | Technology leaders and founders | CEO / Executive, industry Technology |
+| `influencer` | Vloggers, journalists, reporters, YouTubers, gamers | Content Creator |
+| `professional` | Actors, singers, writers, advocates, doctors, sportspeople | guessed from the headline |
+| `trending` | Creators and public figures in the news this week | guessed from the headline |
+
+Groups 1, 2, 3, 4, 5 use: leader/tech/influencer, professional/trending/leader, tech/influencer/professional, trending/leader/tech, influencer/professional/trending. If a category can't be verified that day, one of the 2 unused categories fills the slot. Failed attempts don't move the rotation (`SuggestionSetting.rotation` counts only saved groups). The rules live in `src/services/suggestionCategories.ts`.
 
 How a group is made (`src/services/suggestionService.ts`):
-1. **Tavily** searches the web for top Pakistani and international creators. Each group uses a new topic (tech, food, cricket, comedy and so on).
+1. **Tavily** searches the web for the category (a different query each day; `trending` uses the news search for the last 7 days).
 2. **Groq** (`GROQ_MODEL`) reads only that search text and lists the people in it. A name that is not in the text is dropped.
 3. **Tavily** finds each person's real profile links on instagram.com, youtube.com, tiktok.com, x.com and facebook.com.
 4. **Follower counts** come from the real profile:
    - YouTube: the YouTube Data API. The channel name must match the person, and the channel photo becomes the profile photo.
    - Instagram, TikTok, X and Facebook: the same Tavily follower lookup the platform already uses.
    - An account that can't be verified is left out. A person with no verified account, or with fewer than `SUGGESTIONS_MIN_FOLLOWERS` followers, is skipped.
-5. People and accounts already in the directory or in earlier suggestions are skipped. If 5 verified people can't be found, no group is saved. The reason shows in the admin panel, and the backend tries again after `min(interval, 10 minutes)`.
+5. People and accounts already in the directory or in earlier suggestions are skipped. If 3 verified people can't be found, no group is saved. The reason shows in the admin panel, and the backend tries again after `min(interval, 10 minutes)`.
 
 Adding a suggestion creates the public profile with its social links, handles and verified follower counts (with source links). The admin types nothing, and the followers show on the public profile and talent list at once. After that, the weekly followers cron keeps the counts fresh.
 

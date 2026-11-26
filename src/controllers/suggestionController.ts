@@ -107,7 +107,7 @@ async function approveOne(suggestion: ISuggestion) {
   ])
   const sources = [...new Set(suggestion.socials.map((s) => s.followersSourceUrl || s.url).filter(Boolean))]
   const person = await Person.create({
-    name: suggestion.name, slug, headline: suggestion.headline, bio: suggestion.bio, photoUrl: suggestion.photoUrl, websiteUrl: suggestion.websiteUrl, country: suggestion.country, professions, industries, topics, socialAccounts,
+    name: suggestion.name, slug, headline: suggestion.headline, bio: suggestion.bio, photoUrl: suggestion.photoUrl, websiteUrl: suggestion.websiteUrl, country: suggestion.country || undefined, professions, industries, topics, socialAccounts,
     sourceRecords: (sources.length ? sources : [undefined]).map((url) => ({ sourceType: 'public_web', url, note: 'AI suggested', retrievedAt: new Date() })), visibility: 'visible',
   })
   await refreshNewAccounts(person)

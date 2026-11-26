@@ -8,7 +8,9 @@ import { handleFromUrl } from '../utils/socialHandle'
 import { tavilyFollowers } from './followers/tavily'
 import { youtubeChannel } from './followers/youtube'
 
-export const GROUP_SIZE = 3
+import { CATEGORY_CONFIG, GROUP_SIZE, categoryOrder, professionFor, type SuggestionCategory } from './suggestionCategories'
+
+export { GROUP_SIZE }
 const PLATFORM_ORDER: FollowerPlatform[] = ['youtube', 'instagram', 'tiktok', 'x', 'facebook']
 const SOCIAL_DOMAINS = ['instagram.com', 'youtube.com', 'tiktok.com', 'x.com', 'twitter.com', 'facebook.com']
 
@@ -157,7 +159,7 @@ export async function generateIfDue(force = false, userCountry = 'PK'): Promise<
   if (!lock) return { status: 'busy' }
 
   try {
-    const docs = await buildGroup(lock.cycle ?? 0, userCountry)
+    const docs = await buildGroup(lock.cycle ?? 0, lock.rotation ?? 0, userCountry)
     const batchId = `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`
     const generatedAt = new Date()
     
@@ -173,7 +175,7 @@ export async function generateIfDue(force = false, userCountry = 'PK'): Promise<
 
     await SuggestionSetting.updateOne(
       { key: 'global' },
-      { $set: { lastGeneratedAt: generatedAt, lastError: null } },
+      { $set: { lastGeneratedAt: generatedAt, lastError: null }, $inc: { rotation: 1 } },
     )
     return { status: 'generated', batchId, count: docs.length }
   } catch (error) {
@@ -205,13 +207,20 @@ async function tavilySearch(body: Record<string, unknown>, timeoutMs = 20_000) {
   return (await res.json()) as { answer?: string; results?: TavilyResult[] }
 }
 
-async function discover(scope: 'national' | 'international', topic: string, userCountry: string) {
-  const countryName = { 'PK': 'Pakistani', 'AE': 'UAE', 'SA': 'Saudi Arabian', 'US': 'American', 'GB': 'British', 'IN': 'Indian' }[userCountry] || userCountry
-  const query = scope === 'national' ? `top ${countryName} ${topic} influencers and content creators` : `top international ${topic} influencers and content creators worldwide`
-  
+async function discover(category: SuggestionCategory, round: number, seed: number) {
   if (!env.tavilyApiKey) return ''
-
-  const data = await tavilySearch({ query, search_depth: 'advanced', include_answer: true, max_results: 6 })
+  const config = CATEGORY_CONFIG[category]
+  // Seed (rotation) aur round se roz alag query / topic, taake roz naye log milen
+  const template = config.queries[(seed + round) % config.queries.length]
+  const topic = TOPICS[(seed * 2 + round) % TOPICS.length]
+  const query = template.replace('{topic}', topic)
+  const data = await tavilySearch({
+    query,
+    search_depth: 'advanced',
+    include_answer: true,
+    max_results: 6,
+    ...(config.news ? { topic: 'news', days: 7 } : {}),
+  })
   const parts = [data.answer ?? '', ...(data.results ?? []).map((r) => `${r.title ?? ''}\n${(r.content ?? '').slice(0, 1500)}`)]
   return parts.join('\n\n').slice(0, 12_000)
 }
@@ -220,22 +229,24 @@ async function discover(scope: 'national' | 'international', topic: string, user
 
 interface Candidate {
   name: string
-  scope: 'national' | 'international'
+  category: SuggestionCategory
   country?: string
   headline?: string
   reason?: string
 }
 
-async function extractWithAnthropic(evidence: string, want: number): Promise<Candidate[]> {
+async function extractWithAnthropic(category: SuggestionCategory, evidence: string, want: number): Promise<Candidate[]> {
   if (!env.anthropicApiKey) return []
-  
-  const prompt = `From the following web search text, list up to ${want} individual social media influencers or content creators.
+  const who = CATEGORY_CONFIG[category].who
+
+  const prompt = `From the following web search text, list up to ${want} individual people who are ${who}.
   Rules:
   - Only people whose full name is written in the text. Never add anyone from memory.
-  - Individuals only (no brands, TV channels, agencies or lists).
+  - Individuals only (no brands, TV channels, agencies, parties or lists).
   - Do not include follower counts.
-  - Return JSON only: {"candidates":[{"name": "Full Name", "headline": "Short bio based on text"}]}
-  
+  - "country" is the person's 2-letter ISO country code, only if the text says it (otherwise leave it out).
+  - Return JSON only: {"candidates":[{"name": "Full Name", "headline": "Short bio based on text", "country": "PK"}]}
+
   Search text:
   ${evidence}`
 
@@ -253,20 +264,21 @@ async function extractWithAnthropic(evidence: string, want: number): Promise<Can
         messages: [{ role: 'user', content: prompt }],
       }),
     })
-    
+
     if (!res.ok) throw new Error(`Anthropic API ${res.status}`)
     const data = await res.json()
     const text = data.content?.[0]?.text || ''
-    
+
     const jsonStart = text.indexOf('{')
     const jsonEnd = text.lastIndexOf('}')
     if (jsonStart === -1 || jsonEnd === -1) return []
-    
+
     const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1))
-    return (parsed.candidates || []).map((c: any) => ({
+    return (parsed.candidates || []).map((c: { name: string; headline?: string; country?: string }) => ({
       name: c.name,
-      scope: 'international',
+      category,
       headline: c.headline,
+      country: typeof c.country === 'string' && /^[A-Za-z]{2}$/.test(c.country) ? c.country.toUpperCase() : undefined,
     }))
   } catch (error) {
     console.warn('[suggestions] Anthropic extraction failed', (error as Error).message)
@@ -275,7 +287,7 @@ async function extractWithAnthropic(evidence: string, want: number): Promise<Can
 }
 
 async function extractCandidates(
-  scope: 'national' | 'international',
+  category: SuggestionCategory,
   evidence: string,
   want: number,
   avoid: string[],
@@ -286,8 +298,7 @@ async function extractCandidates(
 
   // ✅ 1. Agar Anthropic available hai, to usko try karein
   if (env.anthropicApiKey) {
-    candidates = await extractWithAnthropic(evidence, want)
-    candidates = candidates.map(c => ({ ...c, scope }))
+    candidates = await extractWithAnthropic(category, evidence, want)
   }
 
   // ✅ 2. Agar Anthropic nahi hai ya fail ho gaya, to fallback to Regex
@@ -309,7 +320,7 @@ async function extractCandidates(
         const normName = norm(name)
         if (avoid.some(a => norm(a) === normName) || seen.has(normName) || parts.length < 2) continue
         seen.add(normName)
-        out.push({ name, scope, country: scope === 'national' ? 'PK' : undefined, headline: cleanLine.slice(0, 150), reason: 'Verified via web search' })
+        out.push({ name, category, headline: cleanLine.slice(0, 150), reason: 'Verified via web search' })
       }
     }
     candidates = out
@@ -450,61 +461,79 @@ async function knownIdentities() {
   return { names, handles, avoid: [...people, ...past].map((p) => p.name) }
 }
 
-async function buildGroup(cycle: number, userCountry: string) {
-  const started = Date.now()
-  const nationalNeed = 2
-  const intlNeed = 1
-  const known = await knownIdentities()
-  const verified: Record<'national' | 'international', Verified[]> = { national: [], international: [] }
-  const tried = new Set<string>()
-  const enough = () => verified.national.length >= nationalNeed && verified.international.length >= intlNeed
-
-  for (let round = 0; round < MAX_ROUNDS && !enough(); round += 1) {
-    if (Date.now() - started > GENERATION_BUDGET_MS) break
-    const topic = TOPICS[(cycle * 2 + round) % TOPICS.length]
-    for (const scope of ['national', 'international'] as const) {
-      const need = scope === 'national' ? nationalNeed : intlNeed
-      if (verified[scope].length >= need) continue
-      let evidence: string
-      try {
-        evidence = await discover(scope, topic, userCountry)
-      } catch (error) {
-        if (round === MAX_ROUNDS - 1) throw error
-        continue
-      }
-      const candidates = (await extractCandidates(scope, evidence, 5, known.avoid)).filter((candidate) => !known.names.has(norm(candidate.name)) && !tried.has(norm(candidate.name)))
-      for (let i = 0; i < candidates.length && verified[scope].length < need; i += 3) {
-        if (Date.now() - started > GENERATION_BUDGET_MS) break
-        const batch = candidates.slice(i, i + 3)
-        batch.forEach((candidate) => tried.add(norm(candidate.name)))
-        const results = await Promise.all(batch.map((c) => verifyCandidate(c, known.handles)))
-        for (const result of results) {
-          if (!result || verified[scope].length >= need) continue
-          verified[scope].push(result)
-          known.names.add(norm(result.candidate.name))
-          result.accounts.forEach((a) => known.handles.add(identityOf(a.platform, a.handle)))
-        }
+// Ek category ka ek verified insaan: is category ke queries chalao, candidates nikalo, accounts verify karo
+async function pickForCategory(
+  category: SuggestionCategory,
+  rounds: number,
+  rotation: number,
+  state: { started: number; known: Awaited<ReturnType<typeof knownIdentities>>; tried: Set<string> },
+): Promise<Verified | null> {
+  for (let round = 0; round < rounds; round += 1) {
+    if (Date.now() - state.started > GENERATION_BUDGET_MS) return null
+    let evidence: string
+    try {
+      evidence = await discover(category, round, rotation)
+    } catch (error) {
+      console.warn(`[suggestions] ${category} search failed:`, (error as Error).message)
+      continue
+    }
+    const candidates = (await extractCandidates(category, evidence, 5, state.known.avoid)).filter(
+      (candidate) => !state.known.names.has(norm(candidate.name)) && !state.tried.has(norm(candidate.name)),
+    )
+    for (let i = 0; i < candidates.length; i += 3) {
+      if (Date.now() - state.started > GENERATION_BUDGET_MS) return null
+      const batch = candidates.slice(i, i + 3)
+      batch.forEach((candidate) => state.tried.add(norm(candidate.name)))
+      const results = await Promise.all(batch.map((c) => verifyCandidate(c, state.known.handles)))
+      const found = results.find((result): result is Verified => Boolean(result))
+      if (found) {
+        state.known.names.add(norm(found.candidate.name))
+        found.accounts.forEach((a) => state.known.handles.add(identityOf(a.platform, a.handle)))
+        return found
       }
     }
   }
-  const group = [...verified.national.slice(0, nationalNeed), ...verified.international.slice(0, intlNeed)]
-  if (group.length < GROUP_SIZE) throw new Error(`Only ${group.length} of ${GROUP_SIZE} could be verified.`)
+  return null
+}
 
-  return group.map(({ candidate, accounts, photoUrl, total }) => {
+// Roz ke 3: rotation ki pehli 3 categories se ek ek. Koi category verify na ho to baqi 2 (backup) mein se bharte hain
+async function buildGroup(_cycle: number, rotation: number, userCountry: string) {
+  const state = { started: Date.now(), known: await knownIdentities(), tried: new Set<string>() }
+  const order = categoryOrder(rotation)
+  const picked: Verified[] = []
+  const gaps: SuggestionCategory[] = []
+
+  for (const category of order.slice(0, GROUP_SIZE)) {
+    const found = await pickForCategory(category, MAX_ROUNDS, rotation, state)
+    if (found) picked.push(found)
+    else gaps.push(category)
+  }
+  for (const category of order.slice(GROUP_SIZE)) {
+    if (picked.length >= GROUP_SIZE) break
+    const found = await pickForCategory(category, 1, rotation, state)
+    if (found) picked.push(found)
+  }
+  if (picked.length < GROUP_SIZE) {
+    throw new Error(`Only ${picked.length} of ${GROUP_SIZE} could be verified${gaps.length ? ` (no match for: ${gaps.join(', ')})` : ''}.`)
+  }
+
+  return picked.map(({ candidate, accounts, photoUrl, total }) => {
     const top = [...accounts].sort((a, b) => b.followers - a.followers)[0]
+    const country = candidate.country || ''
     return {
       name: candidate.name.trim(),
-      scope: candidate.scope,
-      country: candidate.scope === 'national' ? userCountry : (candidate.country || 'US').toUpperCase(),
-      headline: candidate.headline?.trim() || `Verified content creator`,
-      reason: candidate.reason?.trim() || `Verified on ${accounts.map((a) => a.platform).join(', ')}`,
+      category: candidate.category,
+      scope: country === userCountry ? ('national' as const) : ('international' as const),
+      country,
+      headline: candidate.headline?.trim() || CATEGORY_CONFIG[candidate.category].label,
+      reason: candidate.reason?.trim() || `${CATEGORY_CONFIG[candidate.category].label}, verified on ${accounts.map((a) => a.platform).join(', ')}`,
       photoUrl,
       username: top.handle,
       followerCount: total,
       identityKey: identityOf(top.platform, top.handle),
       socials: accounts,
-      profession: undefined,
-      industry: undefined,
+      profession: professionFor(candidate.category, candidate.headline),
+      industry: CATEGORY_CONFIG[candidate.category].industry,
       topics: [],
     }
   })

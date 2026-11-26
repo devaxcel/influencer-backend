@@ -10,6 +10,8 @@ export interface ISuggestionSetting extends Document {
   lastAttemptAt?: Date
   lastError?: string | null
   cycle: number
+  // Kitne groups kamyabi se bane (categories ki rotation isi se chalti hai; nakam koshish nahi ginti)
+  rotation: number
 }
 
 const schema = new Schema<ISuggestionSetting>(
@@ -23,6 +25,7 @@ const schema = new Schema<ISuggestionSetting>(
     lastAttemptAt: Date,
     lastError: { type: String, default: null },
     cycle: { type: Number, default: 0 },
+    rotation: { type: Number, default: 0 },
   },
   { timestamps: true },
 )

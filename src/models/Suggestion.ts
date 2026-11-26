@@ -18,7 +18,9 @@ export interface ISuggestion extends Document {
   identityKey?: string
   name: string
   scope: 'national' | 'international'
-  country: string
+  // Kis category ka hai (leader, tech, influencer, professional, trending)
+  category?: 'leader' | 'tech' | 'influencer' | 'professional' | 'trending'
+  country?: string
   headline: string
   bio?: string
   photoUrl?: string
@@ -46,7 +48,8 @@ const SuggestionSchema = new Schema<ISuggestion>(
     identityKey: { type: String },
     name: { type: String, required: true, trim: true },
     scope: { type: String, enum: ['national', 'international'], required: true },
-    country: { type: String, required: true, trim: true },
+    category: { type: String, enum: ['leader', 'tech', 'influencer', 'professional', 'trending'] },
+    country: { type: String, trim: true, default: '' },
     headline: { type: String, required: true, trim: true },
     bio: { type: String, trim: true },
     photoUrl: { type: String, trim: true },
@@ -73,7 +76,8 @@ const SuggestionSchema = new Schema<ISuggestion>(
 )
 
 // ✅ Unique indexes taake duplicate save na ho
-SuggestionSchema.index({ batchId: 1 }, { unique: true, sparse: true })
+// batchId poore group (3 suggestions) ka sanjha hai, is liye unique nahi
+SuggestionSchema.index({ batchId: 1 })
 SuggestionSchema.index({ identityKey: 1 }, { unique: true, sparse: true })
 SuggestionSchema.index({ date: 1, identityKey: 1 })
 

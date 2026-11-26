@@ -12,6 +12,7 @@ import {
   updateSuggestionSettings,
   approveSuggestionGroup,
   getSuggestionDetail, // ✅ Import kiya
+  getStats,
 } from '../controllers/suggestionController'
 import { requireRole } from '../middlewares/requireRole'
 
@@ -20,6 +21,8 @@ adminSuggestionRouter.use(requireAuth, requireRole('admin'))
 
 adminSuggestionRouter.get('/', listSuggestions)
 adminSuggestionRouter.get('/settings', getSuggestionSettings)
+// /:id se pehle, warna "stats" ko id samajh liya jata hai
+adminSuggestionRouter.get('/stats', getStats)
 adminSuggestionRouter.patch('/settings', updateSuggestionSettings)
 adminSuggestionRouter.post('/generate', generateNow)
 adminSuggestionRouter.post('/tick', tickSuggestions)

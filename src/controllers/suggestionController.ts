@@ -3,6 +3,8 @@ import type { Request, Response } from 'express'
 import Suggestion, { type ISuggestion } from '../models/Suggestion'
 import { Person, type ISocialAccount } from '../models/Person'
 import { Industry, Profession, Topic } from '../models/taxonomy'
+import { getSuggestionStats, recordStat } from '../services/suggestionStats'
+import { GROUP_SIZE } from '../services/suggestionCategories'
 import { generateIfDue, generationStatus, setSuggestionsEnabled, suggestionsEnabled } from '../services/suggestionService'
 import { generateUniquePersonSlug } from '../services/personService'
 import { isFollowerPlatform, refreshNewAccounts } from '../services/followerService'
@@ -111,6 +113,7 @@ async function approveOne(suggestion: ISuggestion) {
     sourceRecords: (sources.length ? sources : [undefined]).map((url) => ({ sourceType: 'public_web', url, note: 'AI suggested', retrievedAt: new Date() })), visibility: 'visible',
   })
   await refreshNewAccounts(person)
+  await recordStat('approved', suggestion.category)
   
   // ✅ Add hone ke baad suggestion delete kar dein
   await Suggestion.findByIdAndDelete(suggestion._id)
@@ -166,7 +169,15 @@ export async function dismissSuggestion(req: Request, res: Response) {
   if (!isValidObjectId(req.params.id)) throw new AppError(404, 'NOT_FOUND', 'Not found')
   const suggestion = await Suggestion.findOneAndUpdate({ _id: req.params.id, status: 'pending' }, { status: 'dismissed' }, { returnDocument: 'after' })
   if (!suggestion) throw new AppError(404, 'NOT_FOUND', 'Not found')
+  await recordStat('dismissed', suggestion.category)
   return sendSuccess(res, suggestion)
+}
+
+// GET /api/admin/suggestions/stats?days=14 -> roz kitni bani / approve / dismiss hui
+export async function getStats(req: Request, res: Response) {
+  const days = Math.min(90, Math.max(1, Number.parseInt(String(req.query.days ?? '14'), 10) || 14))
+  const stats = await getSuggestionStats(days)
+  return sendSuccess(res, { ...stats, dailyTarget: GROUP_SIZE, ...(await generationStatus()) })
 }
 
 export async function getSuggestionSettings(_req: Request, res: Response) {

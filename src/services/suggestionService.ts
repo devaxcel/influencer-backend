@@ -8,6 +8,7 @@ import { handleFromUrl } from '../utils/socialHandle'
 import { tavilyFollowers } from './followers/tavily'
 import { youtubeChannel } from './followers/youtube'
 
+import { recordStat } from './suggestionStats'
 import { CATEGORY_CONFIG, GROUP_SIZE, categoryOrder, professionFor, type SuggestionCategory } from './suggestionCategories'
 
 export { GROUP_SIZE }
@@ -167,6 +168,9 @@ export async function generateIfDue(force = false, userCountry = 'PK'): Promise<
       docs.map((doc: any) => ({ ...doc, batchId, generatedAt, date: todayKey(), status: 'pending' })),
     )
     
+    // Roz ka hisaab (admin stats): kis category ki kitni bani
+    for (const doc of docs) await recordStat('generated', (doc as { category?: string }).category)
+
     // ✅ SMART CLEANUP: Purana fizool data delete karo taake DB full na ho
     await Suggestion.deleteMany({
       batchId: { $ne: batchId },

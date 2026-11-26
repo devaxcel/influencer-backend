@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { adminGetPerson, adminListPeople } from '../controllers/adminController'
+import { fillMissingPhotos, getPhotoGaps } from '../controllers/photoFillController'
 import {
   adminListClaims,
   adminResetClaimOtp,
@@ -28,6 +29,9 @@ const auditClaim = (action: Parameters<typeof audit>[0]['action']) =>
 router.use(requireAuth, requireRole('admin'))
 
 router.get('/people', adminListPeople)
+// /people/:id se pehle
+router.get('/people/photo-gaps', getPhotoGaps)
+router.post('/people/fill-photos', fillMissingPhotos)
 router.get('/people/:id', adminGetPerson)
 router.get('/claims', adminListClaims)
 router.post('/claims/:id/code', auditClaim('claim.send_code'), adminSendClaimCode)

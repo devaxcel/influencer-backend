@@ -10,7 +10,7 @@ import { OG_HEIGHT, OG_WIDTH } from '../services/seoService'
 // beech mein, peeche usi ka dhundhla roop. Chhoti / lambi photo bhi bara preview deti hai.
 export { OG_HEIGHT, OG_WIDTH }
 
-const FETCH_HOSTS = ['res.cloudinary.com']
+const FETCH_HOSTS = ['res.cloudinary.com', 'yt3.ggpht.com', 'yt3.googleusercontent.com']
 
 // Photo ki bytes: apni upload, MongoDB ki PersonPhoto, ya Cloudinary ka link
 async function loadPhoto(photoUrl: string): Promise<Buffer | null> {

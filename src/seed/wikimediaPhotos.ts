@@ -1,9 +1,8 @@
-import sharp from 'sharp'
 import { env } from '../config/env'
 import type { IPhotoCredit } from '../models/Person'
 
 // Wikimedia ka qaida: har request pe saaf User-Agent (contact ke saath)
-const USER_AGENT = `${(env.platformName || 'App').replace(/\s+/g, '')}Seed/1.0 (${env.clientUrl || 'https://example.com'}; contact@example.com)`
+const USER_AGENT = `${(env.platformName || 'App').replace(/\s+/g, '')}Seed/1.0 (${env.clientUrl || 'https://example.com'}; ${(process.env.WIKIMEDIA_CONTACT || 'info@influnexa.com').trim()})`
 const PHOTO_WIDTH = 600
 // Asal file itni bari ho sakti hai; hum khud 600px WebP banate hain
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
@@ -183,6 +182,8 @@ async function fetchWikiPhotoForTitle(title: string): Promise<WikiPhotoResult> {
   const original = Buffer.from(await res.arrayBuffer())
   if (original.length > MAX_DOWNLOAD_BYTES) throw new Error('Image file too large')
 
+  // sharp bhaari native module hai: sirf tab load hota hai jab tasveer banani ho
+  const { default: sharp } = await import('sharp')
   // Hamesha 600px chaurai (chhoti ho to bari nahi karte), WebP: chhoti file, achi quality
   const { data, info: out } = await sharp(original)
     .rotate()

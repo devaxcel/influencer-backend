@@ -4,6 +4,7 @@ import Suggestion, { type ISuggestion } from '../models/Suggestion'
 import { Person, type ISocialAccount } from '../models/Person'
 import { Industry, Profession, Topic } from '../models/taxonomy'
 import { getSuggestionStats, recordStat } from '../services/suggestionStats'
+import { findPersonPhoto, storeFoundPhoto } from '../services/photoService'
 import { GROUP_SIZE } from '../services/suggestionCategories'
 import { generateIfDue, generationStatus, setSuggestionsEnabled, suggestionsEnabled } from '../services/suggestionService'
 import { generateUniquePersonSlug } from '../services/personService'
@@ -108,8 +109,15 @@ async function approveOne(suggestion: ISuggestion) {
     generateUniquePersonSlug(suggestion.name),
   ])
   const sources = [...new Set(suggestion.socials.map((s) => s.followersSourceUrl || s.url).filter(Boolean))]
+  // Photo nahi hai (sirf YouTube se aati thi): YouTube channel ya Wikipedia ki free tasveer. Na mile to bhi approve ho jata hai
+  let photoUrl = suggestion.photoUrl
+  let photoCredit: Awaited<ReturnType<typeof storeFoundPhoto>>['photoCredit']
+  if (!photoUrl) {
+    const found = await findPersonPhoto({ name: suggestion.name, accounts: suggestion.socials.map((s) => ({ platform: s.platform, handle: s.handle })) }, 15_000)
+    if (found) ({ photoUrl, photoCredit } = await storeFoundPhoto(found))
+  }
   const person = await Person.create({
-    name: suggestion.name, slug, headline: suggestion.headline, bio: suggestion.bio, photoUrl: suggestion.photoUrl, websiteUrl: suggestion.websiteUrl, country: suggestion.country || undefined, professions, industries, topics, socialAccounts,
+    name: suggestion.name, slug, headline: suggestion.headline, bio: suggestion.bio, photoUrl, photoCredit, websiteUrl: suggestion.websiteUrl, country: suggestion.country || undefined, professions, industries, topics, socialAccounts,
     sourceRecords: (sources.length ? sources : [undefined]).map((url) => ({ sourceType: 'public_web', url, note: 'AI suggested', retrievedAt: new Date() })), visibility: 'visible',
   })
   await refreshNewAccounts(person)

@@ -1,11 +1,11 @@
-import { env } from '../../config/env'
+import { hasSearchKey, secret } from '../apiSettings'
+import { webSearch } from '../webSearch'
 import type { FollowerPlatform } from '../../constants/people'
 import { urlMatchesHandle } from '../../utils/socialHandle'
 import { groqExtractCount } from './groq'
 import { parseFollowerCount } from './parseCount'
 import type { LookupResult } from './types'
 
-const API = 'https://api.tavily.com/search'
 const EXTRACT_API = 'https://api.tavily.com/extract'
 
 type TavilyPlatform = Exclude<FollowerPlatform, 'youtube'>
@@ -46,23 +46,18 @@ export async function tavilyFollowers(
   platform: TavilyPlatform,
   handle: string,
 ): Promise<LookupResult> {
-  if (!env.tavilyApiKey) return { status: 'disabled' }
+  if (!hasSearchKey()) return { status: 'disabled' }
 
   let data: SearchResponse
   try {
-    const res = await fetch(API, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${env.tavilyApiKey}`, 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(10_000),
-      body: JSON.stringify({
-        query: `${handle} ${NAMES[platform]} followers`,
-        include_domains: DOMAINS[platform],
-        search_depth: 'basic',
-        max_results: 5,
-      }),
+    // Koi bhi search provider (Tavily / Brave / Serper): pehla jo chale
+    data = await webSearch({
+      query: `${handle} ${NAMES[platform]} followers`,
+      domains: DOMAINS[platform],
+      depth: 'basic',
+      maxResults: 5,
+      timeoutMs: 10_000,
     })
-    if (!res.ok) return { status: 'error' }
-    data = (await res.json()) as SearchResponse
   } catch {
     return { status: 'error' }
   }
@@ -88,12 +83,14 @@ export async function tavilyFollowers(
 
 // Tavily Extract (basic: 5 kamyab pages pe 1 credit): account ke apne page ka text
 async function extractFromProfile(platform: TavilyPlatform, handle: string): Promise<LookupResult> {
+  // Profile page seedha parhna sirf Tavily Extract se hota hai
+  if (!secret('tavily')) return { status: 'not_found' }
   const url = PROFILE_URLS[platform](handle)
   let data: ExtractResponse
   try {
     const res = await fetch(EXTRACT_API, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${env.tavilyApiKey}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${secret('tavily')}`, 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(15_000),
       body: JSON.stringify({ urls: [url], extract_depth: 'basic' }),
     })

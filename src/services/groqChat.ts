@@ -1,4 +1,4 @@
-import { env } from '../config/env'
+import { apiConfig, secret } from './apiSettings'
 
 const API = 'https://api.groq.com/openai/v1/chat/completions'
 
@@ -22,11 +22,11 @@ export async function groqChat(
   messages: ChatMessage[],
   opts: { maxTokens: number; json?: boolean; timeoutMs?: number; throwOnError?: boolean },
 ): Promise<string | null> {
-  if (!env.groqApiKey) {
-    if (opts.throwOnError) throw new Error('GROQ_API_KEY is not configured')
+  if (!secret('groq')) {
+    if (opts.throwOnError) throw new Error('No Groq key is set. Add it in Admin → API settings.')
     return null
   }
-  const model = env.groqModel
+  const model = apiConfig().groqModel
   const reasoning = isReasoningModel(model)
   const base = {
     model,
@@ -40,7 +40,7 @@ export async function groqChat(
   const send = async (body: object) =>
     fetch(API, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${env.groqApiKey}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${secret('groq')}`, 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
       body: JSON.stringify(body),
     })

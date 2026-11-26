@@ -22,9 +22,8 @@ export async function connectDB() {
     .connect(env.mongoUri)
     // Har naye connection pe purane claims naye status mein (pehli request se pehle)
     .then(async (connection) => {
-      await migrateLegacyClaims()
-      await migrateLegacyBusinessRoles()
-      await syncVerifiedWithClaims()
+      // Teeno alag collections pe hain, is liye ek saath (cold start jaldi)
+      await Promise.all([migrateLegacyClaims(), migrateLegacyBusinessRoles(), syncVerifiedWithClaims()])
       return connection
     })
     .catch((error) => {

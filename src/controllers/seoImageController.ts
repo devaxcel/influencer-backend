@@ -1,15 +1,14 @@
 import type { Request, Response } from 'express'
 import { isValidObjectId } from 'mongoose'
-import sharp from 'sharp'
 import { env } from '../config/env'
 import { Person } from '../models/Person'
 import { PersonPhoto } from '../models/PersonPhoto'
 import { parseUploadUrl, readImage } from '../services/imageStorage'
+import { OG_HEIGHT, OG_WIDTH } from '../services/seoService'
 
 // Link share (WhatsApp, Facebook, LinkedIn, X) ke liye 1200x630 ki tasveer: profile photo
 // beech mein, peeche usi ka dhundhla roop. Chhoti / lambi photo bhi bara preview deti hai.
-export const OG_WIDTH = 1200
-export const OG_HEIGHT = 630
+export { OG_HEIGHT, OG_WIDTH }
 
 const FETCH_HOSTS = ['res.cloudinary.com']
 
@@ -33,6 +32,8 @@ async function loadPhoto(photoUrl: string): Promise<Buffer | null> {
 }
 
 export async function renderShareImage(photo: Buffer) {
+  // sharp bhaari native module hai: sirf tab load hota hai jab tasveer banani ho (baqi saare requests ka cold start halka)
+  const { default: sharp } = await import('sharp')
   const background = await sharp(photo)
     .resize(OG_WIDTH, OG_HEIGHT, { fit: 'cover' })
     .blur(35)

@@ -29,6 +29,17 @@ export async function verifyRecaptcha(req: Request, token?: string) {
     })
     const data = await response.json() as { success?: boolean; ['error-codes']?: string[] }
     if (!response.ok || !data.success) {
+      const codes = data['error-codes'] ?? []
+      // Google ka asal wajah (secret / site key ka mel, token purana, waghera): server log mein, token ya secret ke baghair
+      console.warn(`[recaptcha] verification failed: ${codes.join(', ') || `HTTP ${response.status}`}`)
+      // Secret galat / site key se nahi milta: ye user ki ghalti nahi, server ki setting hai
+      if (codes.includes('invalid-input-secret') || codes.includes('missing-input-secret')) {
+        throw new AppError(500, 'CAPTCHA_MISCONFIGURED', 'reCAPTCHA is not set up correctly on the server. Please contact support.')
+      }
+      // Token purana ya do dafa use hua: dobara tick karna kaafi hai
+      if (codes.includes('timeout-or-duplicate')) {
+        throw new AppError(400, 'CAPTCHA_FAILED', 'The reCAPTCHA expired. Please tick it again and retry.')
+      }
       throw new AppError(400, 'CAPTCHA_FAILED', 'reCAPTCHA verification failed')
     }
   } catch (error) {

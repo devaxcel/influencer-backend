@@ -191,7 +191,18 @@ export function buildPersonSeoPage(
 
 // Database wagaira ka masla: 503 + no-store, taake Google error ka text index na kare aur baad mein dobara aaye.
 // Body mein phir bhi app ki index.html hai, is liye insaan ko site chalti milti hai
+// Ye pages asal mein website ke pages hain (React ki index.html), API ka JSON nahi. Helmet ke API wale security headers
+// (strict Content-Security-Policy, Cross-Origin-Opener-Policy) yahan nahi lagne chahiye: wo Google reCAPTCHA / Google sign-in
+// ki script aur popup, aur bahar ki tasveerein (YouTube, Cloudinary) rok dete hain, aur ye rok poore tab ke saath rehti hai
+// (is page se login pe jao to bhi). Baqi headers (HSTS, nosniff) frontend ke vercel.json se bhi aate hain
+function dropApiOnlyHeaders(res: Response) {
+  res.removeHeader('Content-Security-Policy')
+  res.removeHeader('Cross-Origin-Opener-Policy')
+  res.removeHeader('Cross-Origin-Embedder-Policy')
+}
+
 export function sendSeoUnavailable(res: Response, shell: string) {
+  dropApiOnlyHeaders(res)
   res.status(503)
   res.set('Retry-After', '120')
   res.set('Content-Type', 'text/html; charset=utf-8')
@@ -201,6 +212,7 @@ export function sendSeoUnavailable(res: Response, shell: string) {
 }
 
 export function sendSeoHtml(res: Response, html: string, status = 200) {
+  dropApiOnlyHeaders(res)
   res.status(status)
   res.set('Content-Type', 'text/html; charset=utf-8')
   res.set('Cache-Control', 'public, max-age=0, must-revalidate')

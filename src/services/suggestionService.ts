@@ -9,6 +9,9 @@ import { tavilyFollowers } from './followers/tavily'
 import { youtubeChannel } from './followers/youtube'
 
 import { recordStat } from './suggestionStats'
+import { hasSearchKey, secret } from './apiSettings'
+import { askLlm } from './llm'
+import { webSearch } from './webSearch'
 import { CATEGORY_CONFIG, GROUP_SIZE, categoryOrder, professionFor, type SuggestionCategory } from './suggestionCategories'
 
 export { GROUP_SIZE }
@@ -77,12 +80,8 @@ export function suggestionIntervalMs() {
 }
 
 export function missingKeys() {
-  // ✅ Tavily ya Anthropic mein se koi ek hona chahiye
-  const hasTavily = Boolean(env.tavilyApiKey)
-  const hasAnthropic = Boolean(env.anthropicApiKey)
-  return [
-    ...(hasTavily || hasAnthropic ? [] : ['TAVILY_API_KEY or ANTHROPIC_API_KEY']),
-  ]
+  // Kam az kam ek search provider (Tavily / Brave / Serper) chahiye; AI (Anthropic / Groq) optional hai
+  return hasSearchKey() ? [] : ['a search API key (Tavily, Brave or Serper)']
 }
 
 const retryAfterMs = () => Math.min(suggestionIntervalMs(), 10 * 60 * 1000)
@@ -151,7 +150,7 @@ export async function generateIfDue(force = false, userCountry = 'PK'): Promise<
 
   const missing = missingKeys()
   if (missing.length) {
-    const error = `${missing.join(' and ')} not set in the backend environment`
+    const error = `No search API key is set (${missing.join(' and ')}). Add one in Admin → API settings.`
     await SuggestionSetting.updateOne({ key: 'global' }, { $set: { lastError: error, lastAttemptAt: new Date() } })
     return { status: 'failed', error }
   }
@@ -194,38 +193,16 @@ export async function generateIfDue(force = false, userCountry = 'PK'): Promise<
 
 // ---------- 1. Discovery (Tavily) ----------
 
-interface TavilyResult {
-  url?: string
-  title?: string
-  content?: string
-}
-
-async function tavilySearch(body: Record<string, unknown>, timeoutMs = 20_000) {
-  const res = await fetch('https://api.tavily.com/search', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${env.tavilyApiKey}`, 'Content-Type': 'application/json' },
-    signal: AbortSignal.timeout(timeoutMs),
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) throw new Error(`Tavily API ${res.status}: ${(await res.text()).slice(0, 300)}`)
-  return (await res.json()) as { answer?: string; results?: TavilyResult[] }
-}
-
 async function discover(category: SuggestionCategory, round: number, seed: number) {
-  if (!env.tavilyApiKey) return ''
+  if (!hasSearchKey()) return ''
   const config = CATEGORY_CONFIG[category]
   // Seed (rotation) aur round se roz alag query / topic, taake roz naye log milen
   const template = config.queries[(seed + round) % config.queries.length]
   const topic = TOPICS[(seed * 2 + round) % TOPICS.length]
   const query = template.replace('{topic}', topic)
-  const data = await tavilySearch({
-    query,
-    search_depth: 'advanced',
-    include_answer: true,
-    max_results: 6,
-    ...(config.news ? { topic: 'news', days: 7 } : {}),
-  })
-  const parts = [data.answer ?? '', ...(data.results ?? []).map((r) => `${r.title ?? ''}\n${(r.content ?? '').slice(0, 1500)}`)]
+  // Provider Admin → API settings ki tarteeb se; ek ki limit ho to agla khud chalta hai
+  const data = await webSearch({ query, answer: true, maxResults: 6, news: config.news, days: 7 })
+  const parts = [data.answer ?? '', ...data.results.map((r) => `${r.title}\n${r.content.slice(0, 1500)}`)]
   return parts.join('\n\n').slice(0, 12_000)
 }
 
@@ -239,8 +216,7 @@ interface Candidate {
   reason?: string
 }
 
-async function extractWithAnthropic(category: SuggestionCategory, evidence: string, want: number): Promise<Candidate[]> {
-  if (!env.anthropicApiKey) return []
+async function extractWithLlm(category: SuggestionCategory, evidence: string, want: number): Promise<Candidate[]> {
   const who = CATEGORY_CONFIG[category].who
 
   const prompt = `From the following web search text, list up to ${want} individual people who are ${who}.
@@ -254,29 +230,13 @@ async function extractWithAnthropic(category: SuggestionCategory, evidence: stri
   Search text:
   ${evidence}`
 
+  // Anthropic (paid) ya Groq (free tier): Admin → API settings ka "AI provider"
+  const text = await askLlm(prompt, { maxTokens: 1000 })
+  if (!text) return []
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': env.anthropicApiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-3-haiku-20240307',
-        max_tokens: 1000,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    })
-
-    if (!res.ok) throw new Error(`Anthropic API ${res.status}`)
-    const data = await res.json()
-    const text = data.content?.[0]?.text || ''
-
     const jsonStart = text.indexOf('{')
     const jsonEnd = text.lastIndexOf('}')
     if (jsonStart === -1 || jsonEnd === -1) return []
-
     const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1))
     return (parsed.candidates || []).map((c: { name: string; headline?: string; country?: string }) => ({
       name: c.name,
@@ -285,7 +245,7 @@ async function extractWithAnthropic(category: SuggestionCategory, evidence: stri
       country: typeof c.country === 'string' && /^[A-Za-z]{2}$/.test(c.country) ? c.country.toUpperCase() : undefined,
     }))
   } catch (error) {
-    console.warn('[suggestions] Anthropic extraction failed', (error as Error).message)
+    console.warn('[suggestions] could not read the AI answer', (error as Error).message)
     return []
   }
 }
@@ -300,12 +260,10 @@ async function extractCandidates(
 
   let candidates: Candidate[] = []
 
-  // ✅ 1. Agar Anthropic available hai, to usko try karein
-  if (env.anthropicApiKey) {
-    candidates = await extractWithAnthropic(category, evidence, want)
-  }
+  // 1. AI (Anthropic ya Groq) agar koi key lagi ho
+  candidates = await extractWithLlm(category, evidence, want)
 
-  // ✅ 2. Agar Anthropic nahi hai ya fail ho gaya, to fallback to Regex
+  // 2. AI nahi hai ya kuch na mila: regex se (kam sahi, magar mehnga nahi)
   if (candidates.length === 0) {
     const out: Candidate[] = []
     const lines = evidence.split('\n')
@@ -358,18 +316,16 @@ async function findHandles(candidate: Candidate) {
   }
 
   try {
-    const data = await tavilySearch(
-      {
-        query: `${candidate.name} official account`,
-        include_domains: SOCIAL_DOMAINS,
-        search_depth: 'basic',
-        max_results: 6,
-      },
-      15_000,
-    )
-    for (const result of data.results ?? []) {
+    const data = await webSearch({
+      query: `${candidate.name} official account`,
+      domains: SOCIAL_DOMAINS,
+      depth: 'basic',
+      maxResults: 6,
+      timeoutMs: 15_000,
+    })
+    for (const result of data.results) {
       if (!result.url) continue
-      const title = `${result.title ?? ''} ${(result.content ?? '').slice(0, 300)}`.toLowerCase()
+      const title = `${result.title} ${result.content.slice(0, 300)}`.toLowerCase()
       const nameInPage = tokens.length > 0 && tokens.every((token) => title.includes(token))
       for (const platform of PLATFORM_ORDER) {
         const handle = handleFromUrl(platform, result.url)
@@ -407,7 +363,7 @@ async function verifyCandidate(candidate: Candidate, known: Set<string>): Promis
       lookups += 1
       const now = new Date()
       if (platform === 'youtube') {
-        if (!env.youtubeApiKey) continue
+        if (!secret('youtube')) continue
         try {
           const channel = await youtubeChannel(option.handle)
           if (!channel || channel.subscribers === null) continue

@@ -1,4 +1,4 @@
-import { env } from '../../config/env'
+import { secret } from '../apiSettings'
 import { isYoutubeChannelId } from '../../utils/socialHandle'
 import type { LookupResult } from './types'
 
@@ -24,7 +24,7 @@ export interface YoutubeChannel {
 async function fetchChannel(params: Record<string, string>) {
   const query = new URLSearchParams({ part: 'snippet,statistics', ...params })
   const res = await fetch(`${API}?${query}`, {
-    headers: { 'X-Goog-Api-Key': env.youtubeApiKey },
+    headers: { 'X-Goog-Api-Key': secret('youtube') },
     signal: AbortSignal.timeout(8000),
   })
   if (!res.ok) throw new Error(`YouTube API ${res.status}`)
@@ -55,7 +55,7 @@ export async function youtubeChannel(handle: string): Promise<YoutubeChannel | n
 
 // YouTube Data API v3 (free, 1 unit fi call): subscribers seedhe channel se
 export async function youtubeFollowers(handle: string): Promise<LookupResult> {
-  if (!env.youtubeApiKey) return { status: 'disabled' }
+  if (!secret('youtube')) return { status: 'disabled' }
   try {
     const channel = await youtubeChannel(handle)
     // Channel ne subscribers chhupa rakhe hain to number nahi

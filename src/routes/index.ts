@@ -19,6 +19,7 @@ import agentRoutes from './agentRoutes'
 import cronRoutes from './cronRoutes'
 import inquiryRoutes from './inquiryRoutes'
 import billingRoutes from './billingRoutes'
+import adminSettingsRoutes from './adminSettingsRoutes'
 import { getUpload } from '../controllers/uploadController'
 import { adminSuggestionRouter, cronRouter as suggestionCronRouter } from './suggestionRoutes'
 
@@ -31,6 +32,7 @@ router.use('/taxonomy', taxonomyRoutes)
 router.use('/claims', claimRoutes)
 router.use('/reports', reportRoutes)
 router.use('/inquiries', inquiryRoutes)
+router.use('/admin/settings', adminSettingsRoutes)
 router.use('/admin', adminRoutes)
 router.use('/notifications', notificationRoutes)
 // /me/manager pehle, warna /me wale talent routes us ko le lete

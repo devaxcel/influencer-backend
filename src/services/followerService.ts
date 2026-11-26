@@ -1,5 +1,6 @@
 import type { HydratedDocument } from 'mongoose'
 import { env } from '../config/env'
+import { hasSearchKey, secret } from './apiSettings'
 import { FOLLOWER_PLATFORMS, type FollowerPlatform, type SocialPlatform } from '../constants/people'
 import { Person, type IPerson, type ISocialAccount } from '../models/Person'
 import { normalizeHandle } from '../utils/socialHandle'
@@ -85,7 +86,7 @@ export function isDue(account: ISocialAccount, now = new Date()) {
 
 // Is platform ki key lagi hai? (warna lookup ka koi faida nahi, baari bhi kharch na ho)
 function canLookup(platform: FollowerPlatform) {
-  return platform === 'youtube' ? Boolean(env.youtubeApiKey) : Boolean(env.tavilyApiKey)
+  return platform === 'youtube' ? Boolean(secret('youtube')) : hasSearchKey()
 }
 
 // Baari le lo: limit ke andar refresh hua ho to nahi milti. Ek hi atomic update, is liye

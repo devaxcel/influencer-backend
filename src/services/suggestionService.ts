@@ -4,7 +4,7 @@ import SuggestionSetting from '../models/SuggestionSetting'
 import { Person } from '../models/Person'
 import { env } from '../config/env'
 import type { FollowerPlatform } from '../constants/people'
-import { handleFromUrl } from '../utils/socialHandle'
+import { handleFromUrl, handleLooksLikeName } from '../utils/socialHandle'
 import { tavilyFollowers } from './followers/tavily'
 import { youtubeChannel } from './followers/youtube'
 
@@ -325,15 +325,20 @@ async function findHandles(candidate: Candidate) {
     })
     for (const result of data.results) {
       if (!result.url) continue
+      const titleOnly = result.title.toLowerCase()
       const title = `${result.title} ${result.content.slice(0, 300)}`.toLowerCase()
       const nameInPage = tokens.length > 0 && tokens.every((token) => title.includes(token))
+      const nameInTitle = tokens.length > 0 && tokens.every((token) => titleOnly.includes(token))
       for (const platform of PLATFORM_ORDER) {
+        // handleFromUrl platform ke apne pages (popular, explore, watch...) ko account nahi maanta
         const handle = handleFromUrl(platform, result.url)
         if (!handle) continue
-        const handleNorm = norm(handle)
-        const handleLooksLikeName = tokens.some((token) => handleNorm.includes(token))
-        const score = (nameInPage ? 2 : 0) + (handleLooksLikeName ? 1 : 0)
-        if (score > 0) add(platform, handle, score)
+        const looksLikeName = handleLooksLikeName(candidate.name, handle)
+        // Account tab maana jata hai jab handle naam se milta ho, ya (na milta ho to) us account ke apne page ke
+        // TITLE mein poora naam ho. Sirf "page ke text mein naam aaya" kaafi nahi: "E! News" ke page pe Kevin Hart ka
+        // zikr hota hai magar wo uska account nahi (pehle ye galat accounts aur galat followers ban jate the)
+        if (!looksLikeName && !nameInTitle) continue
+        add(platform, handle, (looksLikeName ? 3 : 0) + (nameInPage ? 1 : 0) + (nameInTitle ? 1 : 0))
       }
     }
   } catch (error) {
@@ -403,6 +408,51 @@ async function verifyCandidate(candidate: Candidate, known: Set<string>): Promis
   if (accounts.length === 0 || total < 50000) return null
   
   return { candidate, accounts, photoUrl, total }
+}
+
+// Admin ke "Check accounts" ke liye: is naam ka sahi account is platform pe dhoondo aur followers ke saath verify karo.
+// Na mile to null (zabardasti koi account nahi lagta)
+export async function findVerifiedAccount(
+  name: string,
+  platform: FollowerPlatform,
+  exclude: string[] = [],
+): Promise<VerifiedAccount | null> {
+  const options = (await findHandles({ name, category: 'influencer' }))
+    .filter((option) => option.platform === platform && !exclude.includes(option.handle.toLowerCase()))
+    .slice(0, 2)
+  const tokens = nameTokens(name)
+  for (const option of options) {
+    const now = new Date()
+    if (platform === 'youtube') {
+      if (!secret('youtube')) continue
+      try {
+        const channel = await youtubeChannel(option.handle)
+        if (!channel || channel.subscribers === null) continue
+        if (tokens.length && !tokens.some((token) => channel.title.toLowerCase().includes(token))) continue
+        return {
+          platform,
+          handle: option.handle,
+          url: PROFILE_URL.youtube(option.handle),
+          followers: channel.subscribers,
+          followersSourceUrl: `https://www.youtube.com/channel/${channel.id}`,
+          followersUpdatedAt: now,
+        }
+      } catch {
+        continue
+      }
+    }
+    const result = await tavilyFollowers(platform as Exclude<FollowerPlatform, 'youtube'>, option.handle)
+    if (result.status !== 'ok') continue
+    return {
+      platform,
+      handle: option.handle,
+      url: PROFILE_URL[platform](option.handle),
+      followers: result.count,
+      followersSourceUrl: result.sourceUrl,
+      followersUpdatedAt: now,
+    }
+  }
+  return null
 }
 
 async function knownIdentities() {

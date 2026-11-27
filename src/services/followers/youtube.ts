@@ -53,6 +53,17 @@ export async function youtubeChannel(handle: string): Promise<YoutubeChannel | n
   }
 }
 
+// Channel ka asal handle aur link (API ka customUrl, jaise "@casey"). Purana naam (caseyneistat) ya search se mila
+// handle aksar ab kaam nahi karta: youtube.com/@caseyneistat 404 deta tha jabke asal channel @casey hai
+export function canonicalYoutube(channel: YoutubeChannel) {
+  const custom = channel.customUrl?.trim()
+  const handle = custom?.replace(/^@+/, '')
+  if (custom?.startsWith('@') && handle && /^[a-z0-9._-]{3,100}$/i.test(handle)) {
+    return { handle: handle.toLowerCase(), url: `https://www.youtube.com/@${handle}` }
+  }
+  return { handle: channel.id, url: `https://www.youtube.com/channel/${channel.id}` }
+}
+
 // YouTube Data API v3 (free, 1 unit fi call): subscribers seedhe channel se
 export async function youtubeFollowers(handle: string): Promise<LookupResult> {
   if (!secret('youtube')) return { status: 'disabled' }
@@ -64,6 +75,7 @@ export async function youtubeFollowers(handle: string): Promise<LookupResult> {
       status: 'ok',
       count: channel.subscribers,
       sourceUrl: `https://www.youtube.com/channel/${channel.id}`,
+      canonical: canonicalYoutube(channel),
     }
   } catch {
     return { status: 'error' }

@@ -293,7 +293,7 @@ async function extractCandidates(
 
 // ---------- 3 + 4. Verify Social Accounts ----------
 
-interface VerifiedAccount extends SuggestionSocial {
+export interface VerifiedAccount extends SuggestionSocial {
   platform: FollowerPlatform
   handle: string
   followers: number
@@ -412,6 +412,34 @@ async function verifyCandidate(candidate: Candidate, known: Set<string>): Promis
   return { candidate, accounts, photoUrl, total }
 }
 
+// Ek handle ko is platform pe parakho: YouTube channel API se (naam mile, subscribers dikhein), baqi platforms search se
+// (us account ke apne page se followers). Pass ho to account (asal handle, link, followers), warna null
+async function verifyOption(platform: FollowerPlatform, handle: string, tokens: string[]): Promise<VerifiedAccount | null> {
+  const now = new Date()
+  if (platform === 'youtube') {
+    if (!secret('youtube')) return null
+    try {
+      const channel = await youtubeChannel(handle)
+      if (!channel || channel.subscribers === null) return null
+      if (tokens.length && !tokens.some((token) => channel.title.toLowerCase().includes(token))) return null
+      const real = canonicalYoutube(channel)
+      return {
+        platform,
+        handle: real.handle,
+        url: real.url,
+        followers: channel.subscribers,
+        followersSourceUrl: `https://www.youtube.com/channel/${channel.id}`,
+        followersUpdatedAt: now,
+      }
+    } catch {
+      return null
+    }
+  }
+  const result = await tavilyFollowers(platform as Exclude<FollowerPlatform, 'youtube'>, handle)
+  if (result.status !== 'ok') return null
+  return { platform, handle, url: PROFILE_URL[platform](handle), followers: result.count, followersSourceUrl: result.sourceUrl, followersUpdatedAt: now }
+}
+
 // Admin ke "Check accounts" ke liye: is naam ka sahi account is platform pe dhoondo aur followers ke saath verify karo.
 // Na mile to null (zabardasti koi account nahi lagta)
 export async function findVerifiedAccount(
@@ -424,38 +452,39 @@ export async function findVerifiedAccount(
     .slice(0, 2)
   const tokens = nameTokens(name)
   for (const option of options) {
-    const now = new Date()
-    if (platform === 'youtube') {
-      if (!secret('youtube')) continue
-      try {
-        const channel = await youtubeChannel(option.handle)
-        if (!channel || channel.subscribers === null) continue
-        if (tokens.length && !tokens.some((token) => channel.title.toLowerCase().includes(token))) continue
-        const real = canonicalYoutube(channel)
-        return {
-          platform,
-          handle: real.handle,
-          url: real.url,
-          followers: channel.subscribers,
-          followersSourceUrl: `https://www.youtube.com/channel/${channel.id}`,
-          followersUpdatedAt: now,
-        }
-      } catch {
-        continue
-      }
-    }
-    const result = await tavilyFollowers(platform as Exclude<FollowerPlatform, 'youtube'>, option.handle)
-    if (result.status !== 'ok') continue
-    return {
-      platform,
-      handle: option.handle,
-      url: PROFILE_URL[platform](option.handle),
-      followers: result.count,
-      followersSourceUrl: result.sourceUrl,
-      followersUpdatedAt: now,
-    }
+    const account = await verifyOption(platform, option.handle, tokens)
+    if (account) return account
   }
   return null
+}
+
+// Is naam ke saare verified accounts (har platform pe ek), jin platforms / handles ko skip karna ho wo chhor kar.
+// Admin ke "Find accounts" ke liye: ek search, phir har platform pe sab se achhe handle ko verify
+export async function findVerifiedAccounts(
+  name: string,
+  options: { skipPlatforms?: string[]; excludeHandles?: string[] } = {},
+): Promise<VerifiedAccount[]> {
+  const skip = new Set(options.skipPlatforms ?? [])
+  const exclude = new Set((options.excludeHandles ?? []).map((handle) => handle.toLowerCase()))
+  const found = (await findHandles({ name, category: 'influencer' })).filter(
+    (option) => !skip.has(option.platform) && !exclude.has(option.handle.toLowerCase()),
+  )
+  const tokens = nameTokens(name)
+  const accounts: VerifiedAccount[] = []
+  let lookups = 0
+  for (const platform of PLATFORM_ORDER) {
+    if (skip.has(platform)) continue
+    for (const option of found.filter((o) => o.platform === platform)) {
+      if (lookups >= 8) break
+      lookups += 1
+      const account = await verifyOption(platform, option.handle, tokens)
+      if (account) {
+        accounts.push(account)
+        break
+      }
+    }
+  }
+  return accounts
 }
 
 async function knownIdentities() {

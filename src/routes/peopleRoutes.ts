@@ -18,6 +18,7 @@ import { createPersonSchema } from '../validators/personValidator'
 import { getPersonSnapshot } from '../services/auditSnapshots'
 import { removePersonPhoto, uploadPersonPhoto } from '../controllers/uploadController'
 import { uploadImage } from '../middlewares/upload'
+import { getFeaturedWeek, trackProfileView } from '../controllers/featuredController'
 
 const router = Router()
 
@@ -36,6 +37,9 @@ function personUpdateAction(req: Request) {
 
 // Mehman: CDN ka jawab zyada se zyada 10s purana (verified / claimed jaldi dikhe)
 router.get('/', cachePublic(10, 20), listPeople)
+// /:slug se pehle: is hafte ke maqbool profiles, aur profile view ki ginti
+router.get('/featured-week', cachePublic(300, 600), getFeaturedWeek)
+router.post('/:slug/view', trackProfileView)
 router.get('/photos/:id', getPersonPhoto)
 // Talent (ya us ka manager / admin unclaimed pe) profile photo upload karta hai: form field "photo"
 router.put('/:id/photo', requireAuth, uploadImage, uploadPersonPhoto)

@@ -4,6 +4,7 @@ import '../types/express'
 import { AuditLog } from '../models/AuditLog'
 import { Inquiry } from '../models/Inquiry'
 import { Person } from '../models/Person'
+import { recordActivity } from '../services/personActivity'
 import { writeAuditLog } from '../services/auditService'
 import { notifyAdmins } from '../services/notificationService'
 import { AppError } from '../utils/AppError'
@@ -42,6 +43,8 @@ export async function createInquiry(req: Request, res: Response) {
     message: input.message,
     user: req.user?.id,
   })
+
+  await recordActivity(person._id, 'inquiries')
 
   await notifyAdmins({
     type: 'inquiry.new',

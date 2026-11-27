@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { adminGetPerson, adminListPeople } from '../controllers/adminController'
 import { fillMissingPhotos, getPhotoGaps } from '../controllers/photoFillController'
 import { checkSocialLinks, getAccountAudit, keepAuditedAccount, removeAuditedAccount } from '../controllers/accountAuditController'
+import { addAccount, findAccountsBatch, getMissingAccounts, lookupAccounts } from '../controllers/accountFinderController'
 import {
   adminListClaims,
   adminResetClaimOtp,
@@ -38,6 +39,11 @@ router.get('/people/account-audit', getAccountAudit)
 router.post('/people/account-audit/remove', removeAuditedAccount)
 router.post('/people/account-audit/keep', keepAuditedAccount)
 router.post('/people/check-links', checkSocialLinks)
+// Social accounts dhoondna (jin profiles pe nahi hain, ya profile form mein naam se) aur lagana
+router.get('/people/missing-accounts', getMissingAccounts)
+router.post('/people/find-accounts', findAccountsBatch)
+router.post('/people/lookup-accounts', lookupAccounts)
+router.post('/people/add-account', addAccount)
 router.get('/people/:id', adminGetPerson)
 router.get('/claims', adminListClaims)
 router.post('/claims/:id/code', auditClaim('claim.send_code'), adminSendClaimCode)

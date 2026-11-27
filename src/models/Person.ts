@@ -94,6 +94,8 @@ export interface IPerson {
   photoCredit?: IPhotoCredit
   // Admin ke "Fill missing photos" ne aakhri baar kab dhoondi (30 din tak dobara nahi)
   photoSearchedAt?: Date
+  // Admin ke "Find accounts" ne aakhri baar kab social accounts dhoondne ki koshish ki
+  accountsSearchedAt?: Date
   // Profile kis qism ke account ke liye hai (abhi sab "talent")
   roles: string[]
   services: IService[]
@@ -206,6 +208,7 @@ const personSchema = new Schema<IPerson>(
     photoUrl: { type: String, trim: true },
     photoCredit: { type: photoCreditSchema, default: undefined },
     photoSearchedAt: { type: Date },
+    accountsSearchedAt: { type: Date },
     roles: { type: [String], default: ['talent'] },
     services: { type: [serviceSchema], default: [] },
     availability: { type: availabilitySchema, default: undefined },

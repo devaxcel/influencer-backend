@@ -158,6 +158,11 @@ export async function refreshFollowers(
       account.followersUpdatedAt = now
       account.followersStatus = 'ok'
       account.followersFailCount = 0
+      // Platform ne asal handle bataya (YouTube): galat / purana link khud theek ho jata hai
+      if (result.canonical && result.canonical.handle.toLowerCase() !== (account.handle ?? '').toLowerCase()) {
+        account.handle = result.canonical.handle
+        account.url = result.canonical.url
+      }
     } else {
       account.followersStatus = result.status
       account.followersFailCount = (account.followersFailCount ?? 0) + 1

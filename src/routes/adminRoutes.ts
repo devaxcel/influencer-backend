@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { adminGetPerson, adminListPeople } from '../controllers/adminController'
 import { fillMissingPhotos, getPhotoGaps } from '../controllers/photoFillController'
-import { getAccountAudit, keepAuditedAccount, removeAuditedAccount } from '../controllers/accountAuditController'
+import { checkSocialLinks, getAccountAudit, keepAuditedAccount, removeAuditedAccount } from '../controllers/accountAuditController'
 import {
   adminListClaims,
   adminResetClaimOtp,
@@ -37,6 +37,7 @@ router.post('/people/fill-photos', fillMissingPhotos)
 router.get('/people/account-audit', getAccountAudit)
 router.post('/people/account-audit/remove', removeAuditedAccount)
 router.post('/people/account-audit/keep', keepAuditedAccount)
+router.post('/people/check-links', checkSocialLinks)
 router.get('/people/:id', adminGetPerson)
 router.get('/claims', adminListClaims)
 router.post('/claims/:id/code', auditClaim('claim.send_code'), adminSendClaimCode)

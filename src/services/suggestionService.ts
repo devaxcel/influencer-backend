@@ -6,7 +6,7 @@ import { env } from '../config/env'
 import type { FollowerPlatform } from '../constants/people'
 import { handleFromUrl, handleLooksLikeName } from '../utils/socialHandle'
 import { tavilyFollowers } from './followers/tavily'
-import { youtubeChannel } from './followers/youtube'
+import { canonicalYoutube, youtubeChannel } from './followers/youtube'
 
 import { recordStat } from './suggestionStats'
 import { hasSearchKey, secret } from './apiSettings'
@@ -374,10 +374,12 @@ async function verifyCandidate(candidate: Candidate, known: Set<string>): Promis
           if (!channel || channel.subscribers === null) continue
           const title = channel.title.toLowerCase()
           if (tokens.length && !tokens.some((token) => title.includes(token))) continue
+          // Channel ka asal handle (@casey), search mein mila purana naam (caseyneistat) nahi: wo link 404 deta hai
+          const real = canonicalYoutube(channel)
           accounts.push({
             platform,
-            handle: option.handle,
-            url: PROFILE_URL.youtube(option.handle),
+            handle: real.handle,
+            url: real.url,
             followers: channel.subscribers,
             followersSourceUrl: `https://www.youtube.com/channel/${channel.id}`,
             followersUpdatedAt: now,
@@ -429,10 +431,11 @@ export async function findVerifiedAccount(
         const channel = await youtubeChannel(option.handle)
         if (!channel || channel.subscribers === null) continue
         if (tokens.length && !tokens.some((token) => channel.title.toLowerCase().includes(token))) continue
+        const real = canonicalYoutube(channel)
         return {
           platform,
-          handle: option.handle,
-          url: PROFILE_URL.youtube(option.handle),
+          handle: real.handle,
+          url: real.url,
           followers: channel.subscribers,
           followersSourceUrl: `https://www.youtube.com/channel/${channel.id}`,
           followersUpdatedAt: now,

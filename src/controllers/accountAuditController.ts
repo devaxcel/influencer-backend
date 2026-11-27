@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express'
 import { writeAuditLog } from '../services/auditService'
 import { auditAccounts, markAccountChecked, removeAccount } from '../services/accountAudit'
+import { checkLinks } from '../services/linkCheck'
 import { AppError } from '../utils/AppError'
 import { sendSuccess } from '../utils/apiResponse'
 
@@ -39,4 +40,20 @@ export async function keepAuditedAccount(req: Request, res: Response) {
   const { name } = await markAccountChecked(personId, platform, handle)
   await writeAuditLog(req, { action: 'person.confirm_account', targetType: 'person', targetId: personId, targetLabel: name, after: { platform, handle } })
   sendSuccess(res, { ok: true })
+}
+
+// POST /api/admin/people/check-links { fix?: boolean (default true) } -> social links ki jaanch; YouTube ke galat / purane handle khud theek
+export async function checkSocialLinks(req: Request, res: Response) {
+  const fix = req.body?.fix !== false
+  const result = await checkLinks({ fix })
+  if (fix && result.fixed.length > 0) {
+    await writeAuditLog(req, {
+      action: 'person.fix_links',
+      targetType: 'person',
+      targetLabel: `${result.fixed.length} link${result.fixed.length === 1 ? '' : 's'} fixed`,
+      after: { fixed: result.fixed.map((c) => ({ name: c.name, platform: c.platform, from: c.from, to: c.to })) },
+    })
+  }
+  res.set('Cache-Control', 'no-store')
+  sendSuccess(res, result)
 }

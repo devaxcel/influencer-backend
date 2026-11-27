@@ -26,7 +26,7 @@ export function truncate(text: string, max: number) {
   return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,.;:!-]+$/, '')}…`
 }
 
-const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
+const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 })
 export const compactNumber = (n: number) => compact.format(n)
 
 export function countryName(code?: string) {

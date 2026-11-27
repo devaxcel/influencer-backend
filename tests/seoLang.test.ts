@@ -53,3 +53,13 @@ describe('injectSeo with languages', () => {
     expect(withImage).toContain('og:image:width" content="1200"')
   })
 })
+
+describe('follower counts keep two decimals', () => {
+  it('shows 1.17M, not 1.2M', async () => {
+    const { compactNumber } = await import('../src/services/seoService')
+    expect(compactNumber(1_170_000)).toBe('1.17M')
+    expect(compactNumber(24_670_000)).toBe('24.67M')
+    expect(compactNumber(3_400_000)).toBe('3.4M')
+    expect(compactNumber(120_000)).toBe('120K')
+  })
+})

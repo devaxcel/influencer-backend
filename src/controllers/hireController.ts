@@ -5,6 +5,7 @@ import { businessRatings } from './agreementController'
 import { BusinessProfile } from '../models/BusinessProfile'
 import { HireRequest } from '../models/HireRequest'
 import { Person } from '../models/Person'
+import { recordActivity } from '../services/personActivity'
 import { User } from '../models/User'
 import { notifyUser } from '../services/notificationService'
 import {
@@ -113,6 +114,8 @@ export async function createHire(req: Request, res: Response) {
     talent: person.claimedBy,
     serviceTitle,
   })
+
+  await recordActivity(person._id, 'hires')
 
   await notifyUser(person.claimedBy, {
     type: 'hire.new',

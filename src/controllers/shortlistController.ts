@@ -4,6 +4,7 @@ import '../types/express'
 import { Agreement } from '../models/Agreement'
 import { HireRequest } from '../models/HireRequest'
 import { Person } from '../models/Person'
+import { recordActivity } from '../services/personActivity'
 import { MAX_SHORTLIST_ITEMS, MAX_SHORTLISTS, Shortlist } from '../models/Shortlist'
 import { AppError } from '../utils/AppError'
 import { sendSuccess } from '../utils/apiResponse'
@@ -225,6 +226,8 @@ export async function addShortlistItem(req: Request, res: Response) {
       throw new AppError(409, 'SHORTLIST_FULL', `A list can hold up to ${MAX_SHORTLIST_ITEMS} people`)
     }
     list.items.push({ person: person._id, note: note || undefined, addedAt: new Date() })
+    // "Featured this week" ka score
+    await recordActivity(person._id, 'shortlists')
   }
   await list.save()
   sendSuccess(res, { shortlist: await detail(list, req.user!.id) }, existing ? 200 : 201)

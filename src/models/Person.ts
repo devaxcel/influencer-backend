@@ -35,6 +35,8 @@ export interface ISocialAccount {
   followersCheckedAt?: Date
   followersStatus?: FollowerStatus
   followersFailCount?: number
+  // Admin ne dekh kar sahi kaha
+  adminChecked?: Date
 }
 
 export interface ISourceRecord {
@@ -137,6 +139,8 @@ const socialAccountSchema = new Schema<ISocialAccount>(
     followersCheckedAt: { type: Date },
     followersStatus: { type: String, enum: FOLLOWER_STATUSES },
     followersFailCount: { type: Number, min: 0 },
+    // Admin ne dekh kar kaha ye account sahi hai ("Check accounts" ki fehrist mein dobara nahi aata)
+    adminChecked: { type: Date },
   },
   { _id: false },
 )

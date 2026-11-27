@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { adminGetPerson, adminListPeople } from '../controllers/adminController'
 import { fillMissingPhotos, getPhotoGaps } from '../controllers/photoFillController'
+import { getAccountAudit, keepAuditedAccount, removeAuditedAccount } from '../controllers/accountAuditController'
 import {
   adminListClaims,
   adminResetClaimOtp,
@@ -32,6 +33,10 @@ router.get('/people', adminListPeople)
 // /people/:id se pehle
 router.get('/people/photo-gaps', getPhotoGaps)
 router.post('/people/fill-photos', fillMissingPhotos)
+// Galat social account pakadna aur hatana (galat followers ki wajah)
+router.get('/people/account-audit', getAccountAudit)
+router.post('/people/account-audit/remove', removeAuditedAccount)
+router.post('/people/account-audit/keep', keepAuditedAccount)
 router.get('/people/:id', adminGetPerson)
 router.get('/claims', adminListClaims)
 router.post('/claims/:id/code', auditClaim('claim.send_code'), adminSendClaimCode)
